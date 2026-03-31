@@ -5,10 +5,13 @@ package diff
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/apoorv-kulkarni/vigiles/internal/checker"
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
@@ -56,6 +59,16 @@ var newRecencyChecker = func() recencyVersionChecker {
 	return checker.NewRecencyChecker()
 }
 
+type npmNewPackageRiskChecker interface {
+	CheckNewPackage(name, version string) []signal.Signal
+}
+
+var newNpmRiskChecker = func() npmNewPackageRiskChecker {
+	return &npmRegistryRiskChecker{
+		client: &http.Client{Timeout: 4 * time.Second},
+	}
+}
+
 // Run compares two dependency files and returns a diff result.
 func Run(oldPath, newPath string) (*Result, error) {
 	oldDeps, eco1, err := parseFile(oldPath)
@@ -85,6 +98,7 @@ func Run(oldPath, newPath string) (*Result, error) {
 func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 	var entries []Entry
 	recency := newRecencyChecker()
+	npmRisk := newNpmRiskChecker()
 
 	// Check for added and updated
 	for name, newVer := range newDeps {
@@ -94,14 +108,14 @@ func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 				Name: name, Ecosystem: ecosystem,
 				Status: Added, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem, true, recency)
+			e.Signals = annotate(name, newVer, ecosystem, true, recency, npmRisk)
 			entries = append(entries, e)
 		} else if oldVer != newVer {
 			e := Entry{
 				Name: name, Ecosystem: ecosystem,
 				Status: Updated, OldVersion: oldVer, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem, false, recency)
+			e.Signals = annotate(name, newVer, ecosystem, false, recency, npmRisk)
 			entries = append(entries, e)
 		}
 	}
@@ -140,7 +154,7 @@ func statusOrder(s Status) int {
 }
 
 // annotate runs applicable risk signals on a changed dependency.
-func annotate(name, version, ecosystem string, isNew bool, recency recencyVersionChecker) []signal.Signal {
+func annotate(name, version, ecosystem string, isNew bool, recency recencyVersionChecker, npmRisk npmNewPackageRiskChecker) []signal.Signal {
 	var signals []signal.Signal
 
 	// New dependency in the new graph vs old graph.
@@ -186,6 +200,9 @@ func annotate(name, version, ecosystem string, isNew bool, recency recencyVersio
 			}
 		}
 	}
+	if isNew && ecosystem == "npm" && npmRisk != nil {
+		signals = append(signals, npmRisk.CheckNewPackage(name, version)...)
+	}
 
 	return signals
 }
@@ -208,6 +225,134 @@ func normalizeVersionForRecency(version, ecosystem string) (string, bool) {
 		return "", false
 	}
 	return v, true
+}
+
+type npmRegistryRiskChecker struct {
+	client *http.Client
+}
+
+func (c *npmRegistryRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
+	v := strings.TrimSpace(version)
+	if v == "" || strings.ContainsAny(v, "^~<>*| ") {
+		return nil
+	}
+
+	meta, ok := c.fetchPackageVersion(name, v)
+	if !ok {
+		return nil
+	}
+	return evaluateNewNpmScriptRisk(meta.Name, meta.Version, meta.Scripts)
+}
+
+func (c *npmRegistryRiskChecker) fetchPackageVersion(name, version string) (npmVersionMetadata, bool) {
+	if c == nil || c.client == nil {
+		return npmVersionMetadata{}, false
+	}
+	u := fmt.Sprintf("https://registry.npmjs.org/%s/%s", url.PathEscape(name), url.PathEscape(version))
+	resp, err := c.client.Get(u)
+	if err != nil {
+		return npmVersionMetadata{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return npmVersionMetadata{}, false
+	}
+	var meta npmVersionMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return npmVersionMetadata{}, false
+	}
+	if meta.Name == "" {
+		meta.Name = name
+	}
+	if meta.Version == "" {
+		meta.Version = version
+	}
+	return meta, true
+}
+
+type npmVersionMetadata struct {
+	Name    string            `json:"name"`
+	Version string            `json:"version"`
+	Scripts map[string]string `json:"scripts"`
+}
+
+func evaluateNewNpmScriptRisk(name, version string, scripts map[string]string) []signal.Signal {
+	if isPopularNpmPackage(name) || len(scripts) == 0 {
+		return nil
+	}
+
+	riskScripts := []string{"preinstall", "install", "postinstall", "prepare"}
+	var suspicious []string
+	var firstCmd string
+	for _, scriptName := range riskScripts {
+		cmd, ok := scripts[scriptName]
+		if !ok || strings.TrimSpace(cmd) == "" {
+			continue
+		}
+		if isObfuscatedInstallerCommand(cmd) {
+			suspicious = append(suspicious, scriptName)
+			if firstCmd == "" {
+				firstCmd = truncateSnippet(strings.TrimSpace(cmd), 100)
+			}
+		}
+	}
+	if len(suspicious) == 0 {
+		return nil
+	}
+
+	return []signal.Signal{{
+		Package:   name,
+		Version:   version,
+		Ecosystem: "npm",
+		Type:      "heuristic",
+		Severity:  "high",
+		ID:        "VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE",
+		Summary:   fmt.Sprintf("New npm dependency has obfuscated lifecycle script (%s)", strings.Join(suspicious, ", ")),
+		Details: fmt.Sprintf(
+			"New package is outside the popular baseline and defines obfuscated install-time behavior. Script snippet: %s",
+			firstCmd,
+		),
+		Remediation: fmt.Sprintf("Pin and review %s@%s before allowing install; consider blocking until provenance is verified.", name, version),
+	}}
+}
+
+func isPopularNpmPackage(name string) bool {
+	for _, p := range checker.PopularNpmPackages() {
+		if strings.EqualFold(strings.TrimSpace(p), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isObfuscatedInstallerCommand(cmd string) bool {
+	s := strings.ToLower(cmd)
+	obfuscation := []string{"fromcharcode", "atob(", "base64", "eval(", "new function", "buffer.from("}
+	execution := []string{"node -e", "execsync", "child_process", "powershell", "cmd /c", "bash -c", "curl ", "wget "}
+
+	hasObf := false
+	for _, m := range obfuscation {
+		if strings.Contains(s, m) {
+			hasObf = true
+			break
+		}
+	}
+	if !hasObf {
+		return false
+	}
+	for _, m := range execution {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateSnippet(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-1] + "…"
 }
 
 // --- File parsing ---

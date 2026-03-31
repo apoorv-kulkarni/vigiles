@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,7 +9,10 @@ import (
 )
 
 func TestLevenshtein(t *testing.T) {
-	tests := []struct{ a, b string; want int }{
+	tests := []struct {
+		a, b string
+		want int
+	}{
 		{"", "", 0}, {"abc", "abc", 0}, {"abc", "ab", 1},
 		{"abc", "abcd", 1}, {"abc", "aXc", 1},
 		{"requests", "requets", 1}, {"numpy", "numpi", 1},
@@ -22,7 +26,11 @@ func TestLevenshtein(t *testing.T) {
 
 func TestCheckTyposquat(t *testing.T) {
 	popular := []string{"requests", "numpy", "flask", "django", "pandas"}
-	tests := []struct{ name string; wantHit bool; wantPkg string }{
+	tests := []struct {
+		name    string
+		wantHit bool
+		wantPkg string
+	}{
 		{"requets", true, "requests"},
 		{"numpypy", true, "numpy"},
 		{"flasklib", true, "flask"},
@@ -45,7 +53,10 @@ func TestCheckTyposquat(t *testing.T) {
 }
 
 func TestIsSuspiciousVersion(t *testing.T) {
-	tests := []struct{ version string; want bool }{
+	tests := []struct {
+		version string
+		want    bool
+	}{
 		{"1.0.0dev", true}, {"2.0.0alpha", true}, {"3.0.0rc2", true},
 		{"999.0.0", true}, {"100.0.0", true},
 		{"1.0.0", false}, {"0.1.0", false}, {"22.3.1", false},
@@ -59,7 +70,10 @@ func TestIsSuspiciousVersion(t *testing.T) {
 }
 
 func TestContainsSuspiciousImport(t *testing.T) {
-	tests := []struct{ line string; want bool }{
+	tests := []struct {
+		line string
+		want bool
+	}{
 		{"import subprocess; subprocess.Popen(['curl', 'http://evil.com'])", true},
 		{"import os; os.system('rm -rf /')", true},
 		{"import base64; exec(base64.b64decode('...'))", true},
@@ -211,7 +225,10 @@ func TestHeuristicChecker_SystemChecksLabeled(t *testing.T) {
 }
 
 func TestOSV_ScoreToSeverity(t *testing.T) {
-	tests := []struct{ score float64; want string }{
+	tests := []struct {
+		score float64
+		want  string
+	}{
 		{9.8, "critical"}, {9.0, "critical"},
 		{7.5, "high"}, {7.0, "high"},
 		{4.0, "medium"}, {6.9, "medium"},
@@ -243,5 +260,50 @@ func TestOSV_MapEcosystem(t *testing.T) {
 	// Brew should return empty — we don't query OSV for it
 	if got := mapEcosystem("brew"); got != "" {
 		t.Errorf("mapEcosystem(brew) = %q, want empty", got)
+	}
+}
+
+func TestOSV_FixedVersions(t *testing.T) {
+	vuln := osvVuln{
+		Affected: []osvAffected{
+			{
+				Ranges: []osvRange{
+					{Events: []osvEvent{{Introduced: "0"}, {Fixed: "2.1.0"}, {Fixed: "2.2.0"}}},
+					{Events: []osvEvent{{Fixed: "2.2.0"}, {Fixed: "3.0.1"}}},
+				},
+			},
+		},
+	}
+	got := fixedVersions(vuln)
+	want := []string{"2.1.0", "2.2.0", "3.0.1"}
+	if len(got) != len(want) {
+		t.Fatalf("fixedVersions len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("fixedVersions[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestOSV_RemediationFromVuln(t *testing.T) {
+	vulnWithFixed := osvVuln{
+		Affected: []osvAffected{
+			{
+				Ranges: []osvRange{
+					{Events: []osvEvent{{Fixed: "1.2.3"}, {Fixed: "2.0.0"}}},
+				},
+			},
+		},
+	}
+	msg := remediationFromVuln("requests", "pip", vulnWithFixed)
+	if !strings.Contains(msg, "1.2.3") || !strings.Contains(msg, "2.0.0") {
+		t.Fatalf("expected fixed-version remediation, got: %s", msg)
+	}
+
+	vulnNoFixed := osvVuln{}
+	msg = remediationFromVuln("flask", "pip", vulnNoFixed)
+	if !strings.Contains(msg, "currently supported release") {
+		t.Fatalf("expected generic pip remediation, got: %s", msg)
 	}
 }

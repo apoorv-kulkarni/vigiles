@@ -104,7 +104,8 @@ func TestPrintTable_WithFindings(t *testing.T) {
 			Summary: "typosquat"},
 		{Package: "bad", Version: "0.1", Ecosystem: "pip",
 			Type: "vulnerability", Severity: "medium", ID: "CVE-2024-1234",
-			Summary: "vuln 2"},
+			Summary:     "vuln 2",
+			Remediation: "Upgrade bad to >=1.0.0."},
 		{Package: "old", Version: "1.0", Ecosystem: "pip",
 			Type: "vulnerability", Severity: "medium", ID: "CVE-2024-9999",
 			Summary: "vuln"},
@@ -127,6 +128,9 @@ func TestPrintTable_WithFindings(t *testing.T) {
 	}
 	if !strings.Contains(out, "bad") || !strings.Contains(out, "pip") {
 		t.Error("Expected package summary row for bad/pip")
+	}
+	if !strings.Contains(out, "Hint: Upgrade bad to >=1.0.0.") {
+		t.Error("Expected remediation hint in package summary")
 	}
 }
 

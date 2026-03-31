@@ -41,6 +41,7 @@ Vigiles doesn't replace existing tools — it fills gaps between them.
 | `.pth` file scanning | Nothing packaged | ✅ Detects persistence techniques |
 | Dependency diff with risk signals | Nothing packaged | ✅ requirements.txt + package.json |
 | npm install script detection | Nothing packaged | ✅ Flags lifecycle hooks |
+| Suspicious new npm dependency detection (diff) | Rare in CLI scanners | ✅ High-signal rule for obfuscated install hooks in newly added packages |
 | Recently published version check | Nothing packaged | ✅ PyPI versions < 7 days old |
 | Unpinned version detection | Various linters | ✅ Flags ranges and missing pins |
 | Cross-ecosystem local scan | Run tools separately | ✅ pip + npm + brew |
@@ -83,6 +84,8 @@ Example:
   + anthropic                      ==0.25.0
   ~ flask                          ==2.3.0 → >=2.3
     ℹ️ VIGILES-UNPINNED: Dependency uses a version range, not an exact pin
+  + plain-crypto-js                4.2.1
+    🟠 VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE: New npm dependency has obfuscated lifecycle script (postinstall)
   ~ requests                       ==2.31.0 → ==2.32.0
   - boto3                          ==1.28.0
 ```
@@ -95,7 +98,7 @@ Vigiles clearly distinguishes what it finds:
 | Type | Meaning | Examples |
 |------|---------|----------|
 | `vulnerability` | Known CVE/GHSA from OSV database | CVE-2024-xxxx, GHSA-xxxx |
-| `heuristic` | Package-level behavioral red flag | Typosquatting, version anomaly |
+| `heuristic` | Package-level behavioral red flag | Typosquatting, version anomaly, suspicious new npm lifecycle script |
 | `system-heuristic` | Host-level check, not tied to a specific package | `.pth` files, backdoor artifacts |
 | `trust-signal` | Informational — not a vulnerability, but worth knowing | Recently published, unpinned, install scripts |
 
@@ -157,6 +160,7 @@ Vigiles provides **informational signals**, not security guarantees.
 - **Homebrew packages are not checked for CVEs.** No OSV ecosystem mapping exists for Homebrew. Vigiles inventories brew packages but cannot check them for known vulnerabilities.
 - **Heuristic checks use pattern matching.** Typosquatting detection (edit distance), `.pth` file scanning, and persistence detection can produce false positives and will miss novel techniques.
 - **Trust signals are informational, not conclusive.** A recently published version is not inherently malicious. An npm install script is not inherently dangerous. These signals provide context for human judgment.
+- **Diff npm checks may call npm registry.** For newly added npm packages with exact versions, Vigiles may query package metadata to inspect lifecycle scripts.
 - **Recency checks make live PyPI API calls.** One HTTP request per pip package (cached per scan). Use `--skip-recency` if this is too slow or you're offline.
 - **Popular package lists are hardcoded.** Typosquatting detection compares against a static list of ~40 popular packages per ecosystem. This list will go stale over time.
 

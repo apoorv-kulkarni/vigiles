@@ -14,11 +14,20 @@ func (noopRecencyChecker) CheckVersion(name, version, ecosystem string) *signal.
 	return nil
 }
 
+type noopNpmRiskChecker struct{}
+
+func (noopNpmRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
+	return nil
+}
+
 func TestMain(m *testing.M) {
-	orig := newRecencyChecker
+	origRecency := newRecencyChecker
+	origNpmRisk := newNpmRiskChecker
 	newRecencyChecker = func() recencyVersionChecker { return noopRecencyChecker{} }
+	newNpmRiskChecker = func() npmNewPackageRiskChecker { return noopNpmRiskChecker{} }
 	code := m.Run()
-	newRecencyChecker = orig
+	newRecencyChecker = origRecency
+	newNpmRiskChecker = origNpmRisk
 	os.Exit(code)
 }
 
@@ -282,9 +291,27 @@ func (s *stubRecencyChecker) CheckVersion(name, version, ecosystem string) *sign
 	return s.ret
 }
 
+type stubNpmRiskChecker struct {
+	called bool
+	name   string
+	ver    string
+	sigs   []signal.Signal
+}
+
+func (s *stubNpmRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
+	s.called = true
+	s.name = name
+	s.ver = version
+	return s.sigs
+}
+
 func TestComputeDiff_NewDependencySignal(t *testing.T) {
-	oldFactory := newRecencyChecker
-	t.Cleanup(func() { newRecencyChecker = oldFactory })
+	oldRecency := newRecencyChecker
+	oldNpmRisk := newNpmRiskChecker
+	t.Cleanup(func() {
+		newRecencyChecker = oldRecency
+		newNpmRiskChecker = oldNpmRisk
+	})
 
 	stub := &stubRecencyChecker{
 		ret: &signal.Signal{
@@ -332,8 +359,12 @@ func TestComputeDiff_NewDependencySignal(t *testing.T) {
 }
 
 func TestComputeDiff_RecencySkippedForNonPinnedVersion(t *testing.T) {
-	oldFactory := newRecencyChecker
-	t.Cleanup(func() { newRecencyChecker = oldFactory })
+	oldRecency := newRecencyChecker
+	oldNpmRisk := newNpmRiskChecker
+	t.Cleanup(func() {
+		newRecencyChecker = oldRecency
+		newNpmRiskChecker = oldNpmRisk
+	})
 
 	stub := &stubRecencyChecker{}
 	newRecencyChecker = func() recencyVersionChecker { return stub }
@@ -348,6 +379,80 @@ func TestComputeDiff_RecencySkippedForNonPinnedVersion(t *testing.T) {
 	}
 	if stub.called {
 		t.Fatal("did not expect recency checker call for non-pinned pip version")
+	}
+}
+
+func TestComputeDiff_NewNpmRiskSignal(t *testing.T) {
+	oldRecency := newRecencyChecker
+	oldNpmRisk := newNpmRiskChecker
+	t.Cleanup(func() {
+		newRecencyChecker = oldRecency
+		newNpmRiskChecker = oldNpmRisk
+	})
+
+	riskStub := &stubNpmRiskChecker{
+		sigs: []signal.Signal{{
+			Package: "plain-crypto-js", Version: "4.2.1", Ecosystem: "npm",
+			Type: "heuristic", Severity: "high", ID: "VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE",
+		}},
+	}
+	newNpmRiskChecker = func() npmNewPackageRiskChecker { return riskStub }
+
+	entries := computeDiff(
+		map[string]string{"axios": "1.14.0"},
+		map[string]string{"axios": "1.14.1", "plain-crypto-js": "4.2.1"},
+		"npm",
+	)
+
+	var added Entry
+	foundAdded := false
+	for _, e := range entries {
+		if e.Name == "plain-crypto-js" && e.Status == Added {
+			added = e
+			foundAdded = true
+			break
+		}
+	}
+	if !foundAdded {
+		t.Fatal("expected added plain-crypto-js entry")
+	}
+	if !riskStub.called || riskStub.name != "plain-crypto-js" || riskStub.ver != "4.2.1" {
+		t.Fatalf("expected npm risk checker called for added dep, got called=%v %s@%s", riskStub.called, riskStub.name, riskStub.ver)
+	}
+	hasSignal := false
+	for _, sig := range added.Signals {
+		if sig.ID == "VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE" {
+			hasSignal = true
+		}
+	}
+	if !hasSignal {
+		t.Fatal("expected suspicious new npm package signal on added dependency")
+	}
+}
+
+func TestEvaluateNewNpmScriptRisk(t *testing.T) {
+	sigs := evaluateNewNpmScriptRisk("plain-crypto-js", "4.2.1", map[string]string{
+		"postinstall": "node -e \"eval(Buffer.from(payload,'base64').toString())\"",
+	})
+	if len(sigs) == 0 {
+		t.Fatal("expected suspicious script signal")
+	}
+	if sigs[0].ID != "VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE" || sigs[0].Severity != "high" {
+		t.Fatalf("unexpected signal: %+v", sigs[0])
+	}
+
+	popular := evaluateNewNpmScriptRisk("axios", "1.14.1", map[string]string{
+		"postinstall": "node -e \"eval(Buffer.from(payload,'base64').toString())\"",
+	})
+	if len(popular) != 0 {
+		t.Fatal("did not expect high-risk signal for popular npm package from this rule")
+	}
+
+	benign := evaluateNewNpmScriptRisk("new-helper", "1.0.0", map[string]string{
+		"install": "node-gyp rebuild",
+	})
+	if len(benign) != 0 {
+		t.Fatal("did not expect signal for non-obfuscated install script")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,15 +92,16 @@ func (c *OSVChecker) checkBatch(packages []scanner.Package) ([]signal.Signal, er
 		pkg := packages[i]
 		for _, vuln := range result.Vulns {
 			signals = append(signals, signal.Signal{
-				Package:   pkg.Name,
-				Version:   pkg.Version,
-				Ecosystem: pkg.Ecosystem,
-				Type:      "vulnerability",
-				Severity:  classifySeverity(vuln),
-				ID:        vuln.ID,
-				Summary:   vuln.Summary,
-				Details:   fmt.Sprintf("https://osv.dev/vulnerability/%s", vuln.ID),
-				Aliases:   vuln.Aliases,
+				Package:     pkg.Name,
+				Version:     pkg.Version,
+				Ecosystem:   pkg.Ecosystem,
+				Type:        "vulnerability",
+				Severity:    classifySeverity(vuln),
+				ID:          vuln.ID,
+				Summary:     vuln.Summary,
+				Details:     fmt.Sprintf("https://osv.dev/vulnerability/%s", vuln.ID),
+				Remediation: remediationFromVuln(pkg.Name, pkg.Ecosystem, vuln),
+				Aliases:     vuln.Aliases,
 			})
 		}
 	}
@@ -146,7 +148,48 @@ func scoreToSeverity(score float64) string {
 	}
 }
 
-type osvBatchRequest struct{ Queries []osvQuery `json:"queries"` }
+func remediationFromVuln(pkgName, ecosystem string, vuln osvVuln) string {
+	fixed := fixedVersions(vuln)
+	if len(fixed) > 0 {
+		top := fixed
+		if len(top) > 3 {
+			top = top[:3]
+		}
+		return fmt.Sprintf("Upgrade %s to a non-vulnerable version. OSV fixed versions include: %s.",
+			pkgName, strings.Join(top, ", "))
+	}
+	switch ecosystem {
+	case "pip":
+		return fmt.Sprintf("Upgrade %s to a currently supported release.", pkgName)
+	case "npm":
+		return fmt.Sprintf("Upgrade %s to a maintained release.", pkgName)
+	default:
+		return fmt.Sprintf("Upgrade %s to a safer, supported version.", pkgName)
+	}
+}
+
+func fixedVersions(vuln osvVuln) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, affected := range vuln.Affected {
+		for _, r := range affected.Ranges {
+			for _, ev := range r.Events {
+				v := strings.TrimSpace(ev.Fixed)
+				if v == "" || seen[v] {
+					continue
+				}
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+type osvBatchRequest struct {
+	Queries []osvQuery `json:"queries"`
+}
 type osvQuery struct {
 	Package osvPackage `json:"package"`
 	Version string     `json:"version"`
@@ -155,15 +198,32 @@ type osvPackage struct {
 	Name      string `json:"name"`
 	Ecosystem string `json:"ecosystem"`
 }
-type osvBatchResponse struct{ Results []osvResult `json:"results"` }
-type osvResult struct{ Vulns []osvVuln `json:"vulns"` }
+type osvBatchResponse struct {
+	Results []osvResult `json:"results"`
+}
+type osvResult struct {
+	Vulns []osvVuln `json:"vulns"`
+}
 type osvVuln struct {
 	ID       string        `json:"id"`
 	Summary  string        `json:"summary"`
 	Aliases  []string      `json:"aliases"`
 	Severity []osvSeverity `json:"severity"`
+	Affected []osvAffected `json:"affected"`
 }
 type osvSeverity struct {
 	Type  string `json:"type"`
 	Score string `json:"score"`
+}
+type osvAffected struct {
+	Ranges []osvRange `json:"ranges"`
+}
+type osvRange struct {
+	Events []osvEvent `json:"events"`
+}
+type osvEvent struct {
+	Introduced   string `json:"introduced,omitempty"`
+	Fixed        string `json:"fixed,omitempty"`
+	LastAffected string `json:"last_affected,omitempty"`
+	Limit        string `json:"limit,omitempty"`
 }

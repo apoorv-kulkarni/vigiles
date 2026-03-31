@@ -112,6 +112,7 @@ type packageSummaryRow struct {
 	Heuristics      int
 	TrustSignals    int
 	WorstSeverity   string
+	Remediation     string
 }
 
 func printPackageSummary(w io.Writer, sigs []signal.Signal) {
@@ -135,6 +136,9 @@ func printPackageSummary(w io.Writer, sigs []signal.Signal) {
 		switch s.Type {
 		case "vulnerability":
 			row.Vulnerabilities++
+			if row.Remediation == "" && s.Remediation != "" {
+				row.Remediation = s.Remediation
+			}
 		case "heuristic", "system-heuristic":
 			row.Heuristics++
 		case "trust-signal":
@@ -180,6 +184,15 @@ func printPackageSummary(w io.Writer, sigs []signal.Signal) {
 			severityIcon(row.WorstSeverity),
 			strings.Join(parts, ", "),
 		)
+		if row.Vulnerabilities > 0 {
+			hint := row.Remediation
+			if hint == "" {
+				hint = fmt.Sprintf("Upgrade %s to a supported version.", row.Package)
+			}
+			for _, line := range wordWrap("Hint: "+hint, 64) {
+				fmt.Fprintf(w, "  %s%s\n", strings.Repeat(" ", 22), line)
+			}
+		}
 	}
 }
 

@@ -34,6 +34,9 @@ type Signal struct {
 	// Details provides additional context, remediation, or a URL.
 	Details string `json:"details"`
 
+	// Remediation is an actionable fix hint when available.
+	Remediation string `json:"remediation,omitempty"`
+
 	// Aliases are alternative identifiers (e.g., CVE for a GHSA, or vice versa).
 	Aliases []string `json:"aliases,omitempty"`
 }
@@ -73,12 +76,12 @@ func SortSignals(signals []Signal) {
 
 // Summary counts signals by type and severity.
 type Summary struct {
-	Total          int            `json:"total"`
-	BySeverity     map[string]int `json:"by_severity"`
-	ByType         map[string]int `json:"by_type"`
-	Vulnerabilities int           `json:"vulnerabilities"`
-	Heuristics     int            `json:"heuristics"`
-	TrustSignals   int            `json:"trust_signals"`
+	Total           int            `json:"total"`
+	BySeverity      map[string]int `json:"by_severity"`
+	ByType          map[string]int `json:"by_type"`
+	Vulnerabilities int            `json:"vulnerabilities"`
+	Heuristics      int            `json:"heuristics"`
+	TrustSignals    int            `json:"trust_signals"`
 }
 
 // Summarize computes a Summary from a slice of signals.
