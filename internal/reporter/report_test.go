@@ -102,6 +102,9 @@ func TestPrintTable_WithFindings(t *testing.T) {
 		{Package: "bad", Version: "0.1", Ecosystem: "pip",
 			Type: "heuristic", Severity: "high", ID: "VIGILES-TYPOSQUAT",
 			Summary: "typosquat"},
+		{Package: "bad", Version: "0.1", Ecosystem: "pip",
+			Type: "vulnerability", Severity: "medium", ID: "CVE-2024-1234",
+			Summary: "vuln 2"},
 		{Package: "old", Version: "1.0", Ecosystem: "pip",
 			Type: "vulnerability", Severity: "medium", ID: "CVE-2024-9999",
 			Summary: "vuln"},
@@ -118,6 +121,12 @@ func TestPrintTable_WithFindings(t *testing.T) {
 	}
 	if highIdx > medIdx {
 		t.Error("HIGH should appear before MEDIUM")
+	}
+	if !strings.Contains(out, "Top Packages by Findings") {
+		t.Error("Expected package summary block")
+	}
+	if !strings.Contains(out, "bad") || !strings.Contains(out, "pip") {
+		t.Error("Expected package summary row for bad/pip")
 	}
 }
 
