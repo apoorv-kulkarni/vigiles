@@ -4,7 +4,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/apoorv-kulkarni/vigiles/internal/signal"
 )
+
+type noopRecencyChecker struct{}
+
+func (noopRecencyChecker) CheckVersion(name, version, ecosystem string) *signal.Signal {
+	return nil
+}
+
+func TestMain(m *testing.M) {
+	orig := newRecencyChecker
+	newRecencyChecker = func() recencyVersionChecker { return noopRecencyChecker{} }
+	code := m.Run()
+	newRecencyChecker = orig
+	os.Exit(code)
+}
 
 // --- Requirements.txt parsing ---
 
@@ -22,7 +38,7 @@ requests[security]==2.32.0
 	deps := ParseRequirementsTxt(content)
 
 	expect := map[string]string{
-		"requests": "==2.32.0",   // extras stripped, last wins
+		"requests": "==2.32.0", // extras stripped, last wins
 		"flask":    ">=2.0",
 		"numpy":    "",
 		"boto3":    "==1.28.0",
@@ -126,10 +142,10 @@ func TestParsePackageJSON_LockfileV3(t *testing.T) {
 	}
 
 	expect := map[string]string{
-		"express":      "4.18.2",
-		"@babel/core":  "7.23.9",
-		"semver":       "6.3.1",   // nested dep extracted by last node_modules/ segment
-		"accepts":      "1.3.8",
+		"express":     "4.18.2",
+		"@babel/core": "7.23.9",
+		"semver":      "6.3.1", // nested dep extracted by last node_modules/ segment
+		"accepts":     "1.3.8",
 	}
 	for name, want := range expect {
 		got, ok := deps[name]
@@ -247,6 +263,112 @@ func TestComputeDiff_Ordering(t *testing.T) {
 	}
 	if entries[1].Status != Updated {
 		t.Errorf("second should be Updated, got %s", entries[1].Status)
+	}
+}
+
+type stubRecencyChecker struct {
+	called     bool
+	gotName    string
+	gotVersion string
+	gotEco     string
+	ret        *signal.Signal
+}
+
+func (s *stubRecencyChecker) CheckVersion(name, version, ecosystem string) *signal.Signal {
+	s.called = true
+	s.gotName = name
+	s.gotVersion = version
+	s.gotEco = ecosystem
+	return s.ret
+}
+
+func TestComputeDiff_NewDependencySignal(t *testing.T) {
+	oldFactory := newRecencyChecker
+	t.Cleanup(func() { newRecencyChecker = oldFactory })
+
+	stub := &stubRecencyChecker{
+		ret: &signal.Signal{
+			Package: "requests", Version: "2.32.0", Ecosystem: "pip",
+			Type: "trust-signal", Severity: "info",
+			ID: "VIGILES-RECENTLY-PUBLISHED",
+		},
+	}
+	newRecencyChecker = func() recencyVersionChecker { return stub }
+
+	entries := computeDiff(
+		map[string]string{},
+		map[string]string{"requests": "==2.32.0"},
+		"pip",
+	)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Status != Added {
+		t.Fatalf("expected Added entry, got %s", entries[0].Status)
+	}
+
+	hasNew := false
+	hasRecent := false
+	for _, sig := range entries[0].Signals {
+		if sig.ID == "VIGILES-NEW-DEPENDENCY" {
+			hasNew = true
+		}
+		if sig.ID == "VIGILES-RECENTLY-PUBLISHED" {
+			hasRecent = true
+		}
+	}
+	if !hasNew {
+		t.Error("expected VIGILES-NEW-DEPENDENCY signal for added dependency")
+	}
+	if !hasRecent {
+		t.Error("expected recency signal for exact pinned new pip dependency")
+	}
+	if !stub.called {
+		t.Fatal("expected recency checker to be called")
+	}
+	if stub.gotName != "requests" || stub.gotVersion != "2.32.0" || stub.gotEco != "pip" {
+		t.Errorf("unexpected recency check call: got %s %s %s", stub.gotName, stub.gotVersion, stub.gotEco)
+	}
+}
+
+func TestComputeDiff_RecencySkippedForNonPinnedVersion(t *testing.T) {
+	oldFactory := newRecencyChecker
+	t.Cleanup(func() { newRecencyChecker = oldFactory })
+
+	stub := &stubRecencyChecker{}
+	newRecencyChecker = func() recencyVersionChecker { return stub }
+
+	entries := computeDiff(
+		map[string]string{},
+		map[string]string{"requests": ">=2.32.0"},
+		"pip",
+	)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if stub.called {
+		t.Fatal("did not expect recency checker call for non-pinned pip version")
+	}
+}
+
+func TestNormalizeVersionForRecency(t *testing.T) {
+	tests := []struct {
+		version   string
+		ecosystem string
+		want      string
+		ok        bool
+	}{
+		{version: "==2.32.0", ecosystem: "pip", want: "2.32.0", ok: true},
+		{version: "===2.32.0", ecosystem: "pip", want: "2.32.0", ok: true},
+		{version: ">=2.32.0", ecosystem: "pip", ok: false},
+		{version: "^1.2.3", ecosystem: "npm", ok: false},
+	}
+	for _, tt := range tests {
+		got, ok := normalizeVersionForRecency(tt.version, tt.ecosystem)
+		if ok != tt.ok || got != tt.want {
+			t.Errorf("normalizeVersionForRecency(%q, %q) = (%q, %v), want (%q, %v)",
+				tt.version, tt.ecosystem, got, ok, tt.want, tt.ok)
+		}
 	}
 }
 

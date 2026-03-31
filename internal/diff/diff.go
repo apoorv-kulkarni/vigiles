@@ -47,6 +47,15 @@ type dep struct {
 	version string // exact version or specifier
 }
 
+// recencyVersionChecker is a small seam to make diff tests deterministic.
+type recencyVersionChecker interface {
+	CheckVersion(name, version, ecosystem string) *signal.Signal
+}
+
+var newRecencyChecker = func() recencyVersionChecker {
+	return checker.NewRecencyChecker()
+}
+
 // Run compares two dependency files and returns a diff result.
 func Run(oldPath, newPath string) (*Result, error) {
 	oldDeps, eco1, err := parseFile(oldPath)
@@ -75,6 +84,7 @@ func Run(oldPath, newPath string) (*Result, error) {
 
 func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 	var entries []Entry
+	recency := newRecencyChecker()
 
 	// Check for added and updated
 	for name, newVer := range newDeps {
@@ -84,14 +94,14 @@ func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 				Name: name, Ecosystem: ecosystem,
 				Status: Added, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem)
+			e.Signals = annotate(name, newVer, ecosystem, true, recency)
 			entries = append(entries, e)
 		} else if oldVer != newVer {
 			e := Entry{
 				Name: name, Ecosystem: ecosystem,
 				Status: Updated, OldVersion: oldVer, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem)
+			e.Signals = annotate(name, newVer, ecosystem, false, recency)
 			entries = append(entries, e)
 		}
 	}
@@ -130,8 +140,19 @@ func statusOrder(s Status) int {
 }
 
 // annotate runs applicable risk signals on a changed dependency.
-func annotate(name, version, ecosystem string) []signal.Signal {
+func annotate(name, version, ecosystem string, isNew bool, recency recencyVersionChecker) []signal.Signal {
 	var signals []signal.Signal
+
+	// New dependency in the new graph vs old graph.
+	if isNew {
+		signals = append(signals, signal.Signal{
+			Package: name, Version: version, Ecosystem: ecosystem,
+			Type: "trust-signal", Severity: "info",
+			ID:      "VIGILES-NEW-DEPENDENCY",
+			Summary: "New dependency introduced",
+			Details: "This package is present in the new dependency graph but not in the previous baseline.",
+		})
+	}
 
 	// Check for unpinned version
 	if sig := checker.CheckUnpinned(name, version, ecosystem); sig != nil {
@@ -157,7 +178,36 @@ func annotate(name, version, ecosystem string) []signal.Signal {
 		}
 	}
 
+	// Recency check for newly added, exactly pinned pip versions.
+	if isNew && recency != nil {
+		if normalized, ok := normalizeVersionForRecency(version, ecosystem); ok {
+			if recent := recency.CheckVersion(name, normalized, ecosystem); recent != nil {
+				signals = append(signals, *recent)
+			}
+		}
+	}
+
 	return signals
+}
+
+func normalizeVersionForRecency(version, ecosystem string) (string, bool) {
+	if ecosystem != "pip" {
+		return "", false
+	}
+	v := strings.TrimSpace(version)
+	switch {
+	case strings.HasPrefix(v, "==="):
+		v = strings.TrimSpace(v[3:])
+	case strings.HasPrefix(v, "=="):
+		v = strings.TrimSpace(v[2:])
+	default:
+		// For pip, only exact pins should hit recency lookup.
+		return "", false
+	}
+	if v == "" {
+		return "", false
+	}
+	return v, true
 }
 
 // --- File parsing ---
