@@ -1,0 +1,3 @@
+# This file is empty or only comments
+
+  # whitespace before comment

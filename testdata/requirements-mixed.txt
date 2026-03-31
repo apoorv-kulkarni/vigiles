@@ -1,0 +1,9 @@
+# Mixed requirements for testing
+requests==2.32.0  # upgraded
+flask>=2.3  # unpinned
+numpy==1.26.4
+anthropic==0.25.0  # new dep
+pandas~=2.0; python_version >= "3.9"
+urllib3[socks]>=1.26,<3  # extras + range
+-e git+https://github.com/foo/bar.git@main#egg=bar  # editable
+celery  # fully unpinned
