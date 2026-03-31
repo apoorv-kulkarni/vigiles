@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apoorv-kulkarni/vigiles/internal/diff"
 	"github.com/apoorv-kulkarni/vigiles/internal/reporter"
 	"github.com/apoorv-kulkarni/vigiles/internal/scanner"
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
@@ -221,5 +222,41 @@ func TestVersion(t *testing.T) {
 	code := Execute()
 	if code != ExitClean {
 		t.Errorf("version command should exit %d, got %d", ExitClean, code)
+	}
+}
+
+func TestPrintDiffTable_NewDependencyHighlight(t *testing.T) {
+	result := &diff.Result{
+		OldFile:   "old-lock.json",
+		NewFile:   "new-lock.json",
+		Ecosystem: "npm",
+		Entries: []diff.Entry{
+			{
+				Name:       "plain-crypto-js",
+				Ecosystem:  "npm",
+				Status:     diff.Added,
+				NewVersion: "4.2.1",
+				Signals: []signal.Signal{
+					{ID: "VIGILES-NEW-DEPENDENCY", Summary: "New dependency introduced"},
+					{ID: "VIGILES-RECENTLY-PUBLISHED", Summary: "Version published 4 hours ago"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	printDiffTable(&buf, result)
+	out := buf.String()
+
+	for _, want := range []string{
+		"NEW DEPENDENCY:",
+		"plain-crypto-js 4.2.1",
+		"Signals:",
+		"• new transitive dependency",
+		"• published today",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected diff output to contain %q\nOutput:\n%s", want, out)
+		}
 	}
 }

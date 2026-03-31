@@ -19,9 +19,10 @@ import (
 const Version = "0.2.1"
 
 // Exit codes:
-//   0 — scan completed, no findings
-//   1 — scan completed, findings exist
-//   2 — runtime/usage error
+//
+//	0 — scan completed, no findings
+//	1 — scan completed, findings exist
+//	2 — runtime/usage error
 const (
 	ExitClean    = 0
 	ExitFindings = 1
@@ -313,11 +314,28 @@ func printDiffTable(w io.Writer, result *diff.Result) {
 	}
 
 	for _, e := range result.Entries {
+		if e.Status == diff.Added {
+			fmt.Fprintln(w, "  NEW DEPENDENCY:")
+			fmt.Fprintf(w, "  %s %s\n", e.Name, e.NewVersion)
+
+			if len(e.Signals) > 0 {
+				fmt.Fprintln(w, "  Signals:")
+				seen := map[string]bool{}
+				for _, sig := range e.Signals {
+					msg := humanizeDiffSignal(sig)
+					if msg == "" || seen[msg] {
+						continue
+					}
+					seen[msg] = true
+					fmt.Fprintf(w, "  • %s\n", msg)
+				}
+			}
+			fmt.Fprintln(w)
+			continue
+		}
+
 		var icon, ver string
 		switch e.Status {
-		case diff.Added:
-			icon = "+"
-			ver = e.NewVersion
 		case diff.Removed:
 			icon = "-"
 			ver = e.OldVersion
@@ -332,6 +350,24 @@ func printDiffTable(w io.Writer, result *diff.Result) {
 		}
 	}
 	fmt.Fprintln(w)
+}
+
+func humanizeDiffSignal(sig signal.Signal) string {
+	switch sig.ID {
+	case "VIGILES-NEW-DEPENDENCY":
+		return "new transitive dependency"
+	case "VIGILES-RECENTLY-PUBLISHED":
+		lower := strings.ToLower(sig.Summary)
+		if strings.Contains(lower, "< 1 hour") || strings.Contains(lower, "hour") {
+			return "published today"
+		}
+		return "recently published"
+	}
+
+	if sig.Summary != "" {
+		return strings.ToLower(sig.Summary[:1]) + sig.Summary[1:]
+	}
+	return sig.ID
 }
 
 func severityIcon(sev string) string {

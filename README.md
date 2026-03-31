@@ -81,11 +81,19 @@ Example:
   Diff: old.txt → new.txt (pip)
   ────────────────────────────────────────────────────────────
 
-  + anthropic                      ==0.25.0
+  NEW DEPENDENCY:
+  anthropic ==0.25.0
+  Signals:
+  • new transitive dependency
+
   ~ flask                          ==2.3.0 → >=2.3
     ℹ️ VIGILES-UNPINNED: Dependency uses a version range, not an exact pin
-  + plain-crypto-js                4.2.1
-    🟠 VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE: New npm dependency has obfuscated lifecycle script (postinstall)
+  NEW DEPENDENCY:
+  plain-crypto-js 4.2.1
+  Signals:
+  • new transitive dependency
+  • new npm dependency has obfuscated lifecycle script (postinstall)
+
   ~ requests                       ==2.31.0 → ==2.32.0
   - boto3                          ==1.28.0
 ```
