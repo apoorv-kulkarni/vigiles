@@ -26,7 +26,7 @@ go build -o vigiles .
 
 ## Why this exists
 
-On March 24, 2026, backdoored versions of LiteLLM were published to PyPI. In 3 hours, they harvested SSH keys, cloud credentials, and Kubernetes secrets from an estimated 500,000 installations.
+On March 24, 2026, [backdoored versions of LiteLLM were published to PyPI](https://futuresearch.ai/blog/litellm-pypi-supply-chain-attack/). In 3 hours, they harvested SSH keys, cloud credentials, and Kubernetes secrets from an estimated 500,000 installations.
 
 Existing tools like `pip-audit` and `npm audit` check against known CVE databases. That's necessary but insufficient — no advisory existed during the attack window. Vigiles adds heuristic checks and trust signals that surface risk before an advisory is published.
 
@@ -52,18 +52,18 @@ Vigiles doesn't replace existing tools — it fills gaps between them.
 Scans installed packages for known vulnerabilities, heuristic red flags, and trust signals.
 
 ```bash
-vigiles scan
-vigiles scan --ecosystems pip,npm
+vigiles scan                              # auto-detect ecosystems
+vigiles scan --ecosystems pip,npm         # specific ecosystems
 vigiles scan --format json --output report.json
 vigiles scan --format summary
-vigiles scan --skip-vuln
-vigiles scan --skip-recency
-vigiles scan --verbose
+vigiles scan --skip-vuln                  # heuristics only, no network
+vigiles scan --skip-recency               # skip PyPI recency check
+vigiles scan --verbose                    # show per-phase timing
 ```
 
 ### `vigiles diff`
 
-Compares two dependency files and shows what changed.
+Compares two dependency files and shows what changed, annotating new or changed packages with risk signals.
 
 Supported:
 - requirements.txt
