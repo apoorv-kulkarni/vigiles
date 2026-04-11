@@ -35,7 +35,7 @@ Existing tools like `pip-audit` and `npm audit` check against known CVE database
 Vigiles doesn't replace existing tools — it fills gaps between them.
 
 | Capability | Existing tools | Vigiles |
-|------------|---------------|---------|
+| ---------- | ------------- | ------- |
 | Known CVE scanning (pip, npm) | `pip-audit`, `npm audit`, `osv-scanner` | ✅ via OSV API |
 | Homebrew CVE scanning | No OSV ecosystem exists | ❌ Skipped |
 | `.pth` file scanning | Nothing packaged | ✅ Detects persistence techniques |
@@ -85,6 +85,7 @@ Possible output line:
 ```
 
 Interpretation:
+
 - Vigiles found a GitHub repo reference from registry metadata.
 - It could not find a matching source tag for that exact version.
 - This is a **trust signal** (informational), not proof of compromise.
@@ -95,6 +96,7 @@ Interpretation:
 Compares two dependency files and shows what changed, annotating new or changed packages with risk signals.
 
 Supported:
+
 - requirements.txt
 - package.json
 - package-lock.json
@@ -105,7 +107,8 @@ vigiles diff --format json old/package.json new/package.json
 ```
 
 Example:
-```
+
+```text
   Diff: old.txt → new.txt (pip)
   ────────────────────────────────────────────────────────────
 
@@ -125,7 +128,6 @@ Example:
   ~ requests                       ==2.31.0 → ==2.32.0
   - boto3                          ==1.28.0
 ```
-
 
 ## Project configuration (.vigiles.yaml)
 
@@ -164,7 +166,7 @@ Expired suppressions emit a warning on stderr and are not applied. The `--fail-o
 Vigiles clearly distinguishes what it finds:
 
 | Type | Meaning | Examples |
-|------|---------|----------|
+| ---- | ------- | -------- |
 | `vulnerability` | Known CVE/GHSA from OSV database | CVE-2024-xxxx, GHSA-xxxx |
 | `heuristic` | Package-level behavioral red flag | Typosquatting, version anomaly, suspicious new npm lifecycle script |
 | `system-heuristic` | Host-level check, not tied to a specific package | `.pth` files, backdoor artifacts |
@@ -173,7 +175,7 @@ Vigiles clearly distinguishes what it finds:
 ## Exit codes
 
 | Code | Meaning |
-|------|---------|
+| ---- | ------- |
 | `0` | Scan/diff completed, no findings matching `--fail-on` policy |
 | `1` | Scan/diff completed, findings matching `--fail-on` policy exist |
 | `2` | Runtime or usage error |
