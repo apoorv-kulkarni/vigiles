@@ -18,7 +18,8 @@ import (
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
 )
 
-const Version = "0.3.2"
+// Version is set at build time via -ldflags "-X github.com/apoorv-kulkarni/vigiles/cmd.Version=..."
+var Version = "0.3.2"
 
 // Exit codes:
 //

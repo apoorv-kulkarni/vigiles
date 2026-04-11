@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  build:
+    permissions:
+      id-token: write    # for OIDC provenance signing
+      contents: write    # for uploading release assets
+      actions: read      # for slsa-github-generator
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.0.0
+    with:
+      go-version: "1.26"
+      config-file: .slsa-goreleaser.yml
+      upload-assets: true
