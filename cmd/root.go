@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/apoorv-kulkarni/vigiles/internal/checker"
+	"github.com/apoorv-kulkarni/vigiles/internal/config"
 	"github.com/apoorv-kulkarni/vigiles/internal/diff"
 	"github.com/apoorv-kulkarni/vigiles/internal/reporter"
 	"github.com/apoorv-kulkarni/vigiles/internal/scanner"
@@ -19,7 +20,7 @@ import (
 )
 
 // Version is set at build time via -ldflags "-X github.com/apoorv-kulkarni/vigiles/cmd.Version=..."
-var Version = "0.3.4"
+var Version = "0.3.5"
 
 // Exit codes:
 //
@@ -57,6 +58,7 @@ type scanOptions struct {
 	WatchInterval    time.Duration
 	Notify           bool
 	FailOn           map[string]bool
+	Suppressions     []config.Suppression
 }
 
 // parseFailOn parses a comma-separated --fail-on value into a type set.
@@ -73,6 +75,18 @@ func parseFailOn(input string) (map[string]bool, error) {
 		result[t] = true
 	}
 	return result, nil
+}
+
+// resolveFailOn returns the effective fail-on string.
+// CLI flag takes precedence; config policy is the fallback; "all" is the final default.
+func resolveFailOn(flagValue, configValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if configValue != "" {
+		return configValue
+	}
+	return "all"
 }
 
 // hasBlockingSignal reports whether any signal matches the fail-on policy.
@@ -132,7 +146,7 @@ func runScanCmd(args []string) int {
 	watchInterval := fs.Duration("watch-interval", 5*time.Minute, "Watch mode interval (e.g., 30s, 2m)")
 	notify := fs.Bool("notify", false, "Send desktop notifications in watch mode")
 	verbose := fs.Bool("verbose", false, "Show detailed progress")
-	failOnFlag := fs.String("fail-on", "all", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
+	failOnFlag := fs.String("fail-on", "", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none (default: all, or policy.fail-on from .vigiles.yaml)")
 
 	if err := fs.Parse(args); err != nil {
 		return ExitError
@@ -151,7 +165,14 @@ func runScanCmd(args []string) int {
 		return ExitError
 	}
 
-	failOn, err := parseFailOn(*failOnFlag)
+	cfg, err := config.Load(config.DefaultFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		return ExitError
+	}
+
+	failOnStr := resolveFailOn(*failOnFlag, cfg.Policy.FailOn)
+	failOn, err := parseFailOn(failOnStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitError
@@ -173,6 +194,7 @@ func runScanCmd(args []string) int {
 		WatchInterval:    *watchInterval,
 		Notify:           *notify,
 		FailOn:           failOn,
+		Suppressions:     cfg.Suppress,
 	}
 	if opts.WatchMode {
 		if opts.WatchInterval <= 0 {
@@ -303,6 +325,9 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 	// D: Deduplicate signals
 	signals = deduplicateSignals(signals)
 
+	// Apply .vigiles.yaml suppressions
+	signals = config.ApplySuppressions(signals, opts.Suppressions, os.Stderr)
+
 	// Phase 3: Report
 	report := reporter.NewReport(Version, time.Since(startTime), ecoList, allPackages, signals)
 
@@ -409,7 +434,13 @@ func runDiffCmd(args []string) int {
 		return ExitError
 	}
 
-	failOn, err := parseFailOn(*failOnFlag)
+	cfg, err := config.Load(config.DefaultFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		return ExitError
+	}
+
+	failOn, err := parseFailOn(resolveFailOn(*failOnFlag, cfg.Policy.FailOn))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitError
@@ -433,11 +464,12 @@ func runDiffCmd(args []string) int {
 		printDiffTable(os.Stdout, result)
 	}
 
-	// Collect all diff signals and apply fail-on policy
+	// Collect all diff signals, apply suppressions, then fail-on policy
 	var allSignals []signal.Signal
 	for _, e := range result.Entries {
 		allSignals = append(allSignals, e.Signals...)
 	}
+	allSignals = config.ApplySuppressions(allSignals, cfg.Suppress, os.Stderr)
 	if hasBlockingSignal(allSignals, failOn) {
 		return ExitFindings
 	}

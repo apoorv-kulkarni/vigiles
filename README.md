@@ -127,6 +127,38 @@ Example:
 ```
 
 
+## Project configuration (.vigiles.yaml)
+
+Place a `.vigiles.yaml` file in your project root to set persistent policy and suppress known-safe signals without touching CI flags.
+
+```yaml
+version: 1
+
+policy:
+  fail-on: vulnerability,heuristic  # default for this repo; --fail-on flag overrides
+
+suppress:
+  - id: VIGILES-NPM-INSTALL-SCRIPT
+    package: esbuild
+    reason: "known safe build tool, install script is benign"
+    expires: 2027-01-01
+
+  - id: VIGILES-RECENTLY-PUBLISHED
+    package: my-internal-lib
+    reason: "internal package, always recently published"
+```
+
+**Suppression fields:**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `id` | yes | Signal ID to suppress (e.g. `VIGILES-NPM-INSTALL-SCRIPT`) |
+| `package` | no | Limit suppression to a specific package name |
+| `reason` | no | Human-readable justification (recommended) |
+| `expires` | no | `YYYY-MM-DD` date after which the suppression no longer applies |
+
+Expired suppressions emit a warning on stderr and are not applied. The `--fail-on` CLI flag always takes precedence over `policy.fail-on` in the config file.
+
 ## Signal types
 
 Vigiles clearly distinguishes what it finds:
@@ -203,7 +235,7 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "0.3.4",
+  "version": "0.3.5",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
   "ecosystems": ["pip", "npm"],
@@ -242,12 +274,28 @@ Vigiles provides **informational signals**, not security guarantees.
 
 ## Roadmap
 
-- [x] Provenance verification — registry ↔ GitHub source tag matching (beta)
-- [x] Sigstore attestation verification (PEP 740 metadata checks)
+### Shipped
+
+- [x] Cross-ecosystem scan (pip, npm, brew, cargo, go mod)
+- [x] OSV vulnerability checking
+- [x] Heuristic checks (typosquatting, `.pth` files, recency, unpinned versions)
+- [x] Dependency diff with risk signals
+- [x] Suspicious new npm package detection (obfuscated lifecycle scripts)
 - [x] Install script deep inspection (`setup.py`, npm hooks)
-- [x] Additional ecosystem scanners (cargo, go mod)
+- [x] Provenance verification — registry ↔ GitHub source tag matching
+- [x] Sigstore attestation verification (PEP 740 metadata)
 - [x] SARIF output for GitHub Code Scanning
-- [x] Watch mode with notifications
+- [x] Watch mode with desktop notifications
+- [x] `--fail-on` CI policy flag (per signal type)
+- [x] `.vigiles.yaml` project config (persistent policy + suppressions with expiry)
+
+### v0.4 — signal quality and stateful detection
+
+- [ ] Stateful diff — detect behavioral changes between versions (new lifecycle scripts, maintainer changes, package size delta)
+- [ ] Baseline system — `vigiles baseline create` / `vigiles baseline diff` for tracking known state
+- [ ] `go.sum` diff support
+- [ ] Refresh popular package lists from a versioned JSON source
+- [ ] Better signal explanations — human-readable reasoning, not just labels
 
 ## See also
 
