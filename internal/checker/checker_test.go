@@ -257,6 +257,12 @@ func TestOSV_MapEcosystem(t *testing.T) {
 	if got := mapEcosystem("npm"); got != "npm" {
 		t.Errorf("mapEcosystem(npm) = %q, want npm", got)
 	}
+	if got := mapEcosystem("cargo"); got != "crates.io" {
+		t.Errorf("mapEcosystem(cargo) = %q, want crates.io", got)
+	}
+	if got := mapEcosystem("gomod"); got != "Go" {
+		t.Errorf("mapEcosystem(gomod) = %q, want Go", got)
+	}
 	// Brew should return empty — we don't query OSV for it
 	if got := mapEcosystem("brew"); got != "" {
 		t.Errorf("mapEcosystem(brew) = %q, want empty", got)

@@ -38,4 +38,6 @@ func init() {
 	Register(&PipScanner{})
 	Register(&NpmScanner{})
 	Register(&BrewScanner{})
+	Register(&CargoScanner{})
+	Register(&GoModScanner{})
 }

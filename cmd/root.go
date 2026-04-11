@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -30,10 +32,20 @@ const (
 )
 
 // validEcosystems is the set of supported ecosystem names.
-var validEcosystems = map[string]bool{"pip": true, "npm": true, "brew": true}
+var validEcosystems = map[string]bool{"pip": true, "npm": true, "brew": true, "cargo": true, "gomod": true}
 
 // validFormats is the set of supported output formats.
-var validFormats = map[string]bool{"table": true, "json": true, "summary": true}
+var validFormats = map[string]bool{"table": true, "json": true, "summary": true, "sarif": true}
+
+var validDiffFormats = map[string]bool{"table": true, "json": true}
+
+type scanOptions struct {
+	EnableProvenance bool
+	EnableSigstore   bool
+	WatchMode        bool
+	WatchInterval    time.Duration
+	Notify           bool
+}
 
 // Execute parses args and runs the appropriate subcommand.
 // Returns an exit code.
@@ -64,11 +76,16 @@ func runScanCmd(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	ecosystems := fs.String("ecosystems", "auto", "Comma-separated: pip,npm,brew or 'auto'")
-	outputFmt := fs.String("format", "table", "Output format: table, json, summary")
+	outputFmt := fs.String("format", "table", "Output format: table, json, summary, sarif")
 	outputFile := fs.String("output", "", "Write results to file (default: stdout)")
 	skipVuln := fs.Bool("skip-vuln", false, "Skip OSV vulnerability check")
 	skipHeuristic := fs.Bool("skip-heuristic", false, "Skip heuristic checks")
 	skipRecency := fs.Bool("skip-recency", false, "Skip recently-published check")
+	provenance := fs.Bool("provenance", false, "Verify registry package versions against GitHub source tags")
+	sigstore := fs.Bool("sigstore", false, "Check PyPI releases for PEP 740 attestation metadata")
+	watch := fs.Bool("watch", false, "Re-run scans continuously")
+	watchInterval := fs.Duration("watch-interval", 5*time.Minute, "Watch mode interval (e.g., 30s, 2m)")
+	notify := fs.Bool("notify", false, "Send desktop notifications in watch mode")
 	verbose := fs.Bool("verbose", false, "Show detailed progress")
 
 	if err := fs.Parse(args); err != nil {
@@ -77,7 +94,7 @@ func runScanCmd(args []string) int {
 
 	// H: Validate --format
 	if !validFormats[*outputFmt] {
-		fmt.Fprintf(os.Stderr, "Error: invalid format %q (valid: table, json, summary)\n", *outputFmt)
+		fmt.Fprintf(os.Stderr, "Error: invalid format %q (valid: table, json, summary, sarif)\n", *outputFmt)
 		return ExitError
 	}
 
@@ -97,10 +114,29 @@ func runScanCmd(args []string) int {
 		progress = os.Stderr
 	}
 
-	return runScan(ecoList, *outputFmt, *outputFile, *skipVuln, *skipHeuristic, *skipRecency, *verbose, progress)
+	opts := scanOptions{
+		EnableProvenance: *provenance,
+		EnableSigstore:   *sigstore,
+		WatchMode:        *watch,
+		WatchInterval:    *watchInterval,
+		Notify:           *notify,
+	}
+	if opts.WatchMode {
+		if opts.WatchInterval <= 0 {
+			fmt.Fprintln(os.Stderr, "Error: --watch-interval must be > 0")
+			return ExitError
+		}
+		return runScanWatch(ecoList, *outputFmt, *outputFile, *skipVuln, *skipHeuristic, *skipRecency, *verbose, progress, opts)
+	}
+
+	return runScanWithOptions(ecoList, *outputFmt, *outputFile, *skipVuln, *skipHeuristic, *skipRecency, *verbose, progress, opts)
 }
 
 func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuristic, skipRecency, verbose bool, progress io.Writer) int {
+	return runScanWithOptions(ecoList, outputFmt, outputFile, skipVuln, skipHeuristic, skipRecency, verbose, progress, scanOptions{})
+}
+
+func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuristic, skipRecency, verbose bool, progress io.Writer, opts scanOptions) int {
 	startTime := time.Now()
 
 	if len(ecoList) == 0 {
@@ -164,6 +200,9 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 		signals = append(signals, h...)
 
 		if hasEcosystem(ecoList, "npm") {
+			if _, err := os.Stat("package.json"); err == nil {
+				signals = append(signals, checker.CheckNpmInstallScriptsDeep("package.json")...)
+			}
 			if _, err := os.Stat("node_modules"); err == nil {
 				fmt.Fprintf(progress, "▸ Checking npm install scripts...\n")
 				ns := checker.CheckNpmInstallScriptsInNodeModules("node_modules")
@@ -171,6 +210,12 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 					fmt.Fprintf(progress, "  Found %d packages with install scripts\n", len(ns))
 				}
 				signals = append(signals, ns...)
+			}
+		}
+
+		if hasEcosystem(ecoList, "pip") {
+			if _, err := os.Stat("setup.py"); err == nil {
+				signals = append(signals, checker.CheckSetupPyDeep("setup.py")...)
 			}
 		}
 	}
@@ -192,6 +237,16 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 		signals = append(signals, r...)
 	}
 
+	if opts.EnableProvenance {
+		fmt.Fprintf(progress, "▸ Verifying package provenance tags...\n")
+		signals = append(signals, checker.NewProvenanceChecker().Check(allPackages)...)
+	}
+
+	if opts.EnableSigstore {
+		fmt.Fprintf(progress, "▸ Verifying PyPI attestations (PEP 740 metadata)...\n")
+		signals = append(signals, checker.NewSigstoreChecker().Check(allPackages)...)
+	}
+
 	// D: Deduplicate signals
 	signals = deduplicateSignals(signals)
 
@@ -211,6 +266,11 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 			fmt.Fprintf(os.Stderr, "Error writing JSON: %v\n", err)
 			return ExitError
 		}
+	case "sarif":
+		if err := reporter.WriteSARIF(output, report); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing SARIF: %v\n", err)
+			return ExitError
+		}
 	case "summary":
 		reporter.PrintSummary(output, report)
 	default:
@@ -221,6 +281,27 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 		return ExitFindings
 	}
 	return ExitClean
+}
+
+func runScanWatch(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuristic, skipRecency, verbose bool, progress io.Writer, opts scanOptions) int {
+	fmt.Fprintf(progress, "Entering watch mode (interval: %s). Press Ctrl+C to stop.\n", opts.WatchInterval)
+	lastHadFindings := false
+
+	for {
+		code := runScanWithOptions(ecoList, outputFmt, outputFile, skipVuln, skipHeuristic, skipRecency, verbose, progress, opts)
+		hasFindings := code == ExitFindings
+		if opts.Notify && hasFindings && !lastHadFindings {
+			sendNotification("Vigiles", "New dependency findings detected")
+		}
+		lastHadFindings = hasFindings
+		time.Sleep(opts.WatchInterval)
+	}
+}
+
+func sendNotification(title, message string) {
+	if runtime.GOOS == "darwin" {
+		_ = exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q", message, title)).Run()
+	}
 }
 
 // deduplicatePackages removes duplicate packages by name+version+ecosystem.
@@ -269,7 +350,7 @@ func runDiffCmd(args []string) int {
 		return ExitError
 	}
 
-	if !validFormats[*outputFmt] {
+	if !validDiffFormats[*outputFmt] {
 		fmt.Fprintf(os.Stderr, "Error: invalid format %q\n", *outputFmt)
 		return ExitError
 	}
@@ -392,7 +473,7 @@ func severityIcon(sev string) string {
 func parseEcosystems(input string, verbose bool) ([]string, error) {
 	if input == "auto" {
 		var detected []string
-		for _, eco := range []string{"pip", "npm", "brew"} {
+		for _, eco := range []string{"pip", "npm", "brew", "cargo", "gomod"} {
 			s := scanner.Get(eco)
 			if s != nil && s.Available() {
 				detected = append(detected, eco)
@@ -413,7 +494,7 @@ func parseEcosystems(input string, verbose bool) ([]string, error) {
 			continue
 		}
 		if !validEcosystems[e] {
-			return nil, fmt.Errorf("invalid ecosystem %q (valid: pip, npm, brew)", e)
+			return nil, fmt.Errorf("invalid ecosystem %q (valid: pip, npm, brew, cargo, gomod)", e)
 		}
 		ecos = append(ecos, e)
 	}
@@ -453,12 +534,17 @@ Usage:
   vigiles help                          Show this help
 
 Scan flags:
-  --ecosystems string   pip,npm,brew or 'auto' (default "auto")
-  --format string       table, json, summary (default "table")
+	--ecosystems string   pip,npm,brew,cargo,gomod or 'auto' (default "auto")
+	--format string       table, json, summary, sarif (default "table")
   --output string       Write to file instead of stdout
   --skip-vuln           Skip OSV vulnerability lookup
   --skip-heuristic      Skip heuristic checks
   --skip-recency        Skip recently-published check
+	--provenance          Check registry ↔ GitHub tag provenance (pip/npm)
+	--sigstore            Check PyPI PEP 740 attestation metadata
+	--watch               Re-run scan continuously
+	--watch-interval      Interval between watch scans (default 5m)
+	--notify              Desktop notifications (watch mode)
   --verbose             Show detailed progress
 
 Diff flags:
@@ -472,6 +558,8 @@ Exit codes:
 Examples:
   vigiles scan
   vigiles scan --ecosystems pip,npm --format json
+	vigiles scan --ecosystems cargo,gomod --format sarif --output vigiles.sarif
+	vigiles scan --provenance --sigstore
   vigiles diff requirements-old.txt requirements-new.txt
   vigiles diff --format json old/package.json new/package.json
 `)
