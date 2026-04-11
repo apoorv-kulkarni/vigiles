@@ -51,7 +51,7 @@ func TestExitCode_BadEcosystem(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 
-	os.Args = []string{"vigiles", "scan", "--ecosystems", "cargo"}
+	os.Args = []string{"vigiles", "scan", "--ecosystems", "nuget"}
 	code := Execute()
 	if code != ExitError {
 		t.Errorf("expected exit %d for bad ecosystem, got %d", ExitError, code)

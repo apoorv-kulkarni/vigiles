@@ -116,6 +116,10 @@ func mapEcosystem(eco string) string {
 		return "PyPI"
 	case "npm":
 		return "npm"
+	case "cargo":
+		return "crates.io"
+	case "gomod":
+		return "Go"
 	default:
 		return ""
 	}

@@ -10,6 +10,7 @@ func TestParseEcosystems_Valid(t *testing.T) {
 		{"pip", 1},
 		{"pip,npm", 2},
 		{"pip, npm, brew", 3},
+		{"cargo,gomod", 2},
 		{" pip , npm ", 2},
 	}
 
@@ -27,7 +28,7 @@ func TestParseEcosystems_Valid(t *testing.T) {
 
 func TestParseEcosystems_Invalid(t *testing.T) {
 	tests := []string{
-		"pip,cargo",
+		"pip,nuget",
 		"invalid",
 		"pip,,invalid",
 	}
@@ -61,7 +62,7 @@ func TestParseEcosystems_TrimsWhitespace(t *testing.T) {
 }
 
 func TestValidFormats(t *testing.T) {
-	for _, f := range []string{"table", "json", "summary"} {
+	for _, f := range []string{"table", "json", "summary", "sarif"} {
 		if !validFormats[f] {
 			t.Errorf("format %q should be valid", f)
 		}

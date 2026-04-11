@@ -56,11 +56,36 @@ Scans installed packages for known vulnerabilities, heuristic red flags, and tru
 vigiles scan                              # auto-detect ecosystems
 vigiles scan --ecosystems pip,npm         # specific ecosystems
 vigiles scan --format json --output report.json
+vigiles scan --format sarif --output vigiles.sarif
 vigiles scan --format summary
 vigiles scan --skip-vuln                  # heuristics only, no network
 vigiles scan --skip-recency               # skip PyPI recency check
+vigiles scan --provenance --sigstore      # supply-chain metadata checks
+vigiles scan --watch --watch-interval 2m --notify
 vigiles scan --verbose                    # show per-phase timing
 ```
+
+#### Provenance example
+
+When you enable `--provenance`, Vigiles checks whether a package version published in a registry maps to a matching GitHub source tag (`1.2.3` or `v1.2.3`).
+
+Example:
+
+```bash
+vigiles scan --ecosystems pip --provenance --format summary
+```
+
+Possible output line:
+
+```text
+ℹ️  samplepkg               1.4.2        pip      VIGILES-PROVENANCE-TAG-MISMATCH
+```
+
+Interpretation:
+- Vigiles found a GitHub repo reference from registry metadata.
+- It could not find a matching source tag for that exact version.
+- This is a **trust signal** (informational), not proof of compromise.
+- Follow-up: confirm release process, changelog, and signed artifacts before approving in CI.
 
 ### `vigiles diff`
 
@@ -182,12 +207,12 @@ Vigiles provides **informational signals**, not security guarantees.
 
 ## Roadmap
 
-- [ ] Provenance verification — registry ↔ GitHub source tag matching
-- [ ] Sigstore attestation verification (PEP 740)
-- [ ] Install script deep inspection (`setup.py`, npm hooks)
-- [ ] Additional ecosystem scanners (cargo, go mod)
-- [ ] SARIF output for GitHub Code Scanning
-- [ ] Watch mode with notifications
+- [x] Provenance verification — registry ↔ GitHub source tag matching (beta)
+- [x] Sigstore attestation verification (PEP 740 metadata checks)
+- [x] Install script deep inspection (`setup.py`, npm hooks)
+- [x] Additional ecosystem scanners (cargo, go mod)
+- [x] SARIF output for GitHub Code Scanning
+- [x] Watch mode with notifications
 
 ## See also
 
@@ -198,6 +223,7 @@ Vigiles provides **informational signals**, not security guarantees.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+Product planning and release goals live in [docs/PRD.md](docs/PRD.md).
 
 ## License
 
