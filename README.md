@@ -203,7 +203,7 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "0.3.2",
+  "version": "0.3.3",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
   "ecosystems": ["pip", "npm"],
