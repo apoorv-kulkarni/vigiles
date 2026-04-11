@@ -18,7 +18,7 @@ import (
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
 )
 
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 // Exit codes:
 //
@@ -39,12 +39,56 @@ var validFormats = map[string]bool{"table": true, "json": true, "summary": true,
 
 var validDiffFormats = map[string]bool{"table": true, "json": true}
 
+// validFailOnTypes is the set of accepted --fail-on values.
+var validFailOnTypes = map[string]bool{
+	"vulnerability":   true,
+	"heuristic":       true,
+	"system-heuristic": true,
+	"trust-signal":    true,
+	"all":             true,
+	"none":            true,
+}
+
 type scanOptions struct {
 	EnableProvenance bool
 	EnableSigstore   bool
 	WatchMode        bool
 	WatchInterval    time.Duration
 	Notify           bool
+	FailOn           map[string]bool
+}
+
+// parseFailOn parses a comma-separated --fail-on value into a type set.
+func parseFailOn(input string) (map[string]bool, error) {
+	result := map[string]bool{}
+	for _, t := range strings.Split(input, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if !validFailOnTypes[t] {
+			return nil, fmt.Errorf("invalid --fail-on value %q (valid: vulnerability, heuristic, system-heuristic, trust-signal, all, none)", t)
+		}
+		result[t] = true
+	}
+	return result, nil
+}
+
+// hasBlockingSignal reports whether any signal matches the fail-on policy.
+// A nil or empty map defaults to "all" behaviour (backward-compatible).
+func hasBlockingSignal(signals []signal.Signal, failOn map[string]bool) bool {
+	if len(failOn) == 0 || failOn["all"] {
+		return len(signals) > 0
+	}
+	if failOn["none"] {
+		return false
+	}
+	for _, s := range signals {
+		if failOn[s.Type] {
+			return true
+		}
+	}
+	return false
 }
 
 // Execute parses args and runs the appropriate subcommand.
@@ -87,6 +131,7 @@ func runScanCmd(args []string) int {
 	watchInterval := fs.Duration("watch-interval", 5*time.Minute, "Watch mode interval (e.g., 30s, 2m)")
 	notify := fs.Bool("notify", false, "Send desktop notifications in watch mode")
 	verbose := fs.Bool("verbose", false, "Show detailed progress")
+	failOnFlag := fs.String("fail-on", "all", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
 
 	if err := fs.Parse(args); err != nil {
 		return ExitError
@@ -100,6 +145,12 @@ func runScanCmd(args []string) int {
 
 	// H: Validate --ecosystems
 	ecoList, err := parseEcosystems(*ecosystems, *verbose)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return ExitError
+	}
+
+	failOn, err := parseFailOn(*failOnFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitError
@@ -120,6 +171,7 @@ func runScanCmd(args []string) int {
 		WatchMode:        *watch,
 		WatchInterval:    *watchInterval,
 		Notify:           *notify,
+		FailOn:           failOn,
 	}
 	if opts.WatchMode {
 		if opts.WatchInterval <= 0 {
@@ -277,7 +329,7 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 		reporter.PrintTable(output, report)
 	}
 
-	if len(signals) > 0 {
+	if hasBlockingSignal(signals, opts.FailOn) {
 		return ExitFindings
 	}
 	return ExitClean
@@ -339,6 +391,7 @@ func runDiffCmd(args []string) int {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	outputFmt := fs.String("format", "table", "Output format: table, json")
+	failOnFlag := fs.String("fail-on", "all", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
 
 	if err := fs.Parse(args); err != nil {
 		return ExitError
@@ -352,6 +405,12 @@ func runDiffCmd(args []string) int {
 
 	if !validDiffFormats[*outputFmt] {
 		fmt.Fprintf(os.Stderr, "Error: invalid format %q\n", *outputFmt)
+		return ExitError
+	}
+
+	failOn, err := parseFailOn(*failOnFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitError
 	}
 
@@ -373,14 +432,13 @@ func runDiffCmd(args []string) int {
 		printDiffTable(os.Stdout, result)
 	}
 
-	// Exit 1 if there are any changes with signals
+	// Collect all diff signals and apply fail-on policy
+	var allSignals []signal.Signal
 	for _, e := range result.Entries {
-		if len(e.Signals) > 0 {
-			return ExitFindings
-		}
+		allSignals = append(allSignals, e.Signals...)
 	}
-	if len(result.Entries) > 0 {
-		return ExitClean // changes exist but no risk signals
+	if hasBlockingSignal(allSignals, failOn) {
+		return ExitFindings
 	}
 	return ExitClean
 }
@@ -537,6 +595,8 @@ Scan flags:
 	--ecosystems string   pip,npm,brew,cargo,gomod or 'auto' (default "auto")
 	--format string       table, json, summary, sarif (default "table")
   --output string       Write to file instead of stdout
+  --fail-on string      Signal types that trigger exit 1: vulnerability, heuristic,
+                        system-heuristic, trust-signal, all, none (default "all")
   --skip-vuln           Skip OSV vulnerability lookup
   --skip-heuristic      Skip heuristic checks
   --skip-recency        Skip recently-published check
@@ -549,10 +609,11 @@ Scan flags:
 
 Diff flags:
   --format string       table, json (default "table")
+  --fail-on string      Signal types that trigger exit 1 (same values as scan)
 
 Exit codes:
-  0  Scan completed, no findings
-  1  Scan completed, findings exist
+  0  Scan completed, no findings (or no findings matching --fail-on policy)
+  1  Scan completed, findings matching --fail-on policy exist
   2  Runtime or usage error
 
 Examples:

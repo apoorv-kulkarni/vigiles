@@ -47,7 +47,19 @@ func (c *ProvenanceChecker) Check(packages []scanner.Package) []signal.Signal {
 		if repo == "" {
 			continue
 		}
-		if !c.repoHasVersionTag(repo, pkg.Version) {
+		found, err := c.repoHasVersionTag(repo, pkg.Version)
+		if err != nil {
+			out = append(out, signal.Signal{
+				Package:   pkg.Name,
+				Version:   pkg.Version,
+				Ecosystem: pkg.Ecosystem,
+				Type:      "trust-signal",
+				Severity:  "info",
+				ID:        "VIGILES-PROVENANCE-UNVERIFIABLE",
+				Summary:   "Provenance check could not be completed",
+				Details:   fmt.Sprintf("Could not fetch tags for repository %s: %v. This is informational — it does not indicate a mismatch.", repo, err),
+			})
+		} else if !found {
 			out = append(out, signal.Signal{
 				Package:   pkg.Name,
 				Version:   pkg.Version,
@@ -56,7 +68,7 @@ func (c *ProvenanceChecker) Check(packages []scanner.Package) []signal.Signal {
 				Severity:  "info",
 				ID:        "VIGILES-PROVENANCE-TAG-MISMATCH",
 				Summary:   "GitHub source tag does not match registry version",
-				Details:   fmt.Sprintf("Repository %s does not expose tag %s (or v%s) in recent tags.", repo, pkg.Version, pkg.Version),
+				Details:   fmt.Sprintf("Repository %s does not expose tag %s (or v%s).", repo, pkg.Version, pkg.Version),
 			})
 		}
 	}
@@ -111,31 +123,39 @@ func (c *ProvenanceChecker) findRepoFromNPM(name, version string) string {
 	return extractGitHubRepo(payload.Repository.URL)
 }
 
-func (c *ProvenanceChecker) repoHasVersionTag(repo, version string) bool {
-	u := fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=100", repo)
-	resp, err := c.client.Get(u)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return false
-	}
-	defer resp.Body.Close()
-	var tags []struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return false
-	}
+func (c *ProvenanceChecker) repoHasVersionTag(repo, version string) (bool, error) {
 	want := strings.TrimSpace(version)
 	wantV := "v" + want
-	for _, t := range tags {
-		name := strings.TrimSpace(t.Name)
-		if name == want || name == wantV {
-			return true
+
+	for page := 1; page <= 5; page++ {
+		u := fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=100&page=%d", repo, page)
+		resp, err := c.client.Get(u)
+		if err != nil {
+			return false, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return false, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		}
+		var tags []struct {
+			Name string `json:"name"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&tags)
+		resp.Body.Close()
+		if err != nil {
+			return false, err
+		}
+		for _, t := range tags {
+			name := strings.TrimSpace(t.Name)
+			if name == want || name == wantV {
+				return true, nil
+			}
+		}
+		if len(tags) < 100 {
+			return false, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func extractGitHubRepo(raw string) string {

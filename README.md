@@ -4,7 +4,7 @@
 
 Named after the [Vigiles Urbani](https://en.wikipedia.org/wiki/Vigiles), Rome's night watchmen who patrolled for fires and threats before they could spread. Vigiles does the same for your software supply chain.
 
-A single binary that scans your installed packages across **pip, npm, and Homebrew**, compares dependency files for changes, and surfaces known vulnerabilities alongside behavioral trust signals — things that help you make informed decisions about your dependencies.
+A single binary that scans your installed packages across **pip, npm, Homebrew, Cargo, and Go modules**, compares dependency files for changes, and surfaces known vulnerabilities alongside behavioral trust signals — things that help you make informed decisions about your dependencies.
 
 ## Quickstart
 
@@ -58,6 +58,9 @@ vigiles scan --ecosystems pip,npm         # specific ecosystems
 vigiles scan --format json --output report.json
 vigiles scan --format sarif --output vigiles.sarif
 vigiles scan --format summary
+vigiles scan --fail-on vulnerability      # exit 1 only for CVEs
+vigiles scan --fail-on vulnerability,heuristic  # CVEs and heuristic red flags
+vigiles scan --fail-on none               # always exit 0 (reporting only)
 vigiles scan --skip-vuln                  # heuristics only, no network
 vigiles scan --skip-recency               # skip PyPI recency check
 vigiles scan --provenance --sigstore      # supply-chain metadata checks
@@ -139,8 +142,8 @@ Vigiles clearly distinguishes what it finds:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Scan/diff completed, no findings |
-| `1` | Scan/diff completed, findings exist |
+| `0` | Scan/diff completed, no findings matching `--fail-on` policy |
+| `1` | Scan/diff completed, findings matching `--fail-on` policy exist |
 | `2` | Runtime or usage error |
 
 This makes Vigiles usable as a CI gate.
@@ -168,7 +171,7 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
   "ecosystems": ["pip", "npm"],
