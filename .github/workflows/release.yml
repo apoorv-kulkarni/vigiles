@@ -11,10 +11,37 @@ jobs:
   build:
     permissions:
       id-token: write    # for OIDC provenance signing
-      contents: write    # for uploading release assets
+      contents: write    # required by slsa-github-generator
       actions: read      # for slsa-github-generator
     uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.0.0
     with:
       go-version: "1.26"
       config-file: .slsa-goreleaser.yml
-      upload-assets: true
+      upload-assets: false   # we handle the release ourselves below
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: vigiles
+
+      - name: Download provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: vigiles.intoto.jsonl
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            vigiles \
+            vigiles.intoto.jsonl \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
