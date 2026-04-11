@@ -18,7 +18,7 @@ import (
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
 )
 
-const Version = "0.3.1"
+const Version = "0.3.2"
 
 // Exit codes:
 //

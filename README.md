@@ -150,19 +150,51 @@ This makes Vigiles usable as a CI gate.
 
 ## GitHub Actions
 
+### Block on CVEs, surface everything else as annotations
+
+The recommended pattern: fail the build on known vulnerabilities, upload a
+SARIF report so heuristics and trust signals appear as annotations in the
+GitHub Security tab without blocking the build.
+
+```yaml
+- name: Install vigiles
+  run: go install github.com/apoorv-kulkarni/vigiles@latest
+
+- name: Scan dependencies
+  run: vigiles scan --fail-on vulnerability --format sarif --output vigiles.sarif
+
+- name: Upload to GitHub Code Scanning
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: vigiles.sarif
+```
+
+### Also block on heuristic red flags
+
 ```yaml
 - name: Scan dependencies
-  run: |
-    go install github.com/apoorv-kulkarni/vigiles@latest
-    vigiles scan --skip-recency --format json --output vigiles-report.json
-    vigiles diff requirements-old.txt requirements.txt
+  run: vigiles scan --fail-on vulnerability,heuristic --format sarif --output vigiles.sarif
+```
 
-- name: Upload report
+### Gate on dependency diffs in pull requests
+
+```yaml
+- name: Check dependency changes
+  run: vigiles diff --fail-on vulnerability,heuristic requirements-baseline.txt requirements.txt
+```
+
+### Reporting only (never blocks CI)
+
+```yaml
+- name: Scan dependencies
+  run: vigiles scan --fail-on none --format sarif --output vigiles.sarif
+
+- name: Upload to GitHub Code Scanning
   if: always()
-  uses: actions/upload-artifact@v4
+  uses: github/codeql-action/upload-sarif@v3
   with:
-    name: vigiles-report
-    path: vigiles-report.json
+    sarif_file: vigiles.sarif
 ```
 
 ## JSON output
@@ -171,7 +203,7 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
   "ecosystems": ["pip", "npm"],

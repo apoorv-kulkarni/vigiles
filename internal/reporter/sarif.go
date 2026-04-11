@@ -24,8 +24,16 @@ func WriteSARIF(w io.Writer, report Report) error {
 				"fullDescription": map[string]string{
 					"text": s.Details,
 				},
+				"helpUri": "https://github.com/apoorv-kulkarni/vigiles#signal-types",
+				"help": map[string]string{
+					"text":     ruleHelpText(s),
+					"markdown": ruleHelpMarkdown(s),
+				},
 				"defaultConfiguration": map[string]string{
 					"level": sarifLevel(s.Severity),
+				},
+				"properties": map[string]any{
+					"tags": []string{"security", "supply-chain", s.Type},
 				},
 			}
 		}
@@ -73,6 +81,22 @@ func WriteSARIF(w io.Writer, report Report) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+func ruleHelpText(s signal.Signal) string {
+	out := s.Details
+	if s.Remediation != "" {
+		out += "\n\nRemediation: " + s.Remediation
+	}
+	return out
+}
+
+func ruleHelpMarkdown(s signal.Signal) string {
+	out := s.Details
+	if s.Remediation != "" {
+		out += "\n\n**Remediation:** " + s.Remediation
+	}
+	return out
 }
 
 func sarifLevel(sev string) string {
