@@ -1,4 +1,9 @@
-version: 2
+version: 1
+
+binary: vigiles
+main: .
+goos: linux
+goarch: amd64
 
 env:
   - GO111MODULE=on
@@ -8,17 +13,4 @@ flags:
   - -trimpath
 
 ldflags:
-  - -s -w
-  - -X github.com/apoorv-kulkarni/vigiles/cmd.Version={{ .Tag }}
-
-goos:
-  - linux
-  - darwin
-  - windows
-
-goarch:
-  - amd64
-  - arm64
-
-main: .
-binary: vigiles
+  - "-s -w -X github.com/apoorv-kulkarni/vigiles/cmd.Version={{ .Tag }}"

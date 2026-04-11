@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at build time via -ldflags "-X github.com/apoorv-kulkarni/vigiles/cmd.Version=..."
-var Version = "0.3.3"
+var Version = "0.3.4"
 
 // Exit codes:
 //
