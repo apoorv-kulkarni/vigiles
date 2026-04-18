@@ -369,7 +369,8 @@ func parseFile(path string) (map[string]string, string, error) {
 	case base == "package.json" || base == "package-lock.json":
 		deps, err := parsePackageJSON(data)
 		return deps, "npm", err
-	case base == "requirements.txt" || strings.HasSuffix(base, ".txt"):
+	case base == "requirements.txt" || base == "constraints.txt" ||
+		(strings.HasSuffix(base, ".txt") && (strings.HasPrefix(base, "requirements-") || strings.HasPrefix(base, "requirements_"))):
 		deps := parseRequirementsTxt(string(data))
 		return deps, "pip", nil
 	default:

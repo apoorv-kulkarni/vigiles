@@ -40,6 +40,7 @@ func (c *OSVChecker) Check(packages []scanner.Package) ([]signal.Signal, error) 
 	}
 
 	var signals []signal.Signal
+	var batchErrs []string
 	for i := 0; i < len(queryable); i += batchSize {
 		end := i + batchSize
 		if end > len(queryable) {
@@ -47,9 +48,14 @@ func (c *OSVChecker) Check(packages []scanner.Package) ([]signal.Signal, error) 
 		}
 		batch, err := c.checkBatch(queryable[i:end])
 		if err != nil {
-			return signals, fmt.Errorf("batch %d-%d failed: %w", i, end, err)
+			batchErrs = append(batchErrs, fmt.Sprintf("batch %d-%d: %v", i, end, err))
+			continue
 		}
 		signals = append(signals, batch...)
+	}
+	if len(batchErrs) > 0 {
+		return signals, fmt.Errorf("%d batch(es) failed (partial results returned): %s",
+			len(batchErrs), strings.Join(batchErrs, "; "))
 	}
 	return signals, nil
 }
@@ -82,6 +88,9 @@ func (c *OSVChecker) checkBatch(packages []scanner.Package) ([]signal.Signal, er
 	var batchResp osvBatchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&batchResp); err != nil {
 		return nil, fmt.Errorf("parsing OSV response: %w", err)
+	}
+	if len(batchResp.Results) != len(packages) {
+		return nil, fmt.Errorf("OSV returned %d results for %d queries", len(batchResp.Results), len(packages))
 	}
 
 	var signals []signal.Signal

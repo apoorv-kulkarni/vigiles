@@ -116,17 +116,25 @@ func parse(data []byte) (*Config, error) {
 	var cur *Suppression
 
 	for lineNum, raw := range strings.Split(string(data), "\n") {
-		// strip inline comments
+		// Reject tab indentation — YAML forbids it and we'd count tabs as 1 space.
+		if strings.ContainsRune(raw, '\t') && !strings.HasPrefix(strings.TrimLeft(raw, " "), "#") {
+			return nil, fmt.Errorf("line %d: tab indentation is not supported; use spaces", lineNum+1)
+		}
+
+		// Strip inline comments, but not when the # appears inside a quoted value.
 		line := raw
 		if idx := strings.Index(line, " #"); idx >= 0 {
-			line = line[:idx]
+			before := line[:idx]
+			if strings.Count(before, "\"")%2 == 0 {
+				line = before
+			}
 		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 
-		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		indent := len(raw) - len(strings.TrimLeft(raw, " "))
 
 		// top-level key — resets section
 		if indent == 0 {

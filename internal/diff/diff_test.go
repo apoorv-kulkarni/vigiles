@@ -532,8 +532,8 @@ func TestDiff_FixturePackageJSON(t *testing.T) {
 
 func TestDiff_FixtureEmpty(t *testing.T) {
 	dir := t.TempDir()
-	a := filepath.Join(dir, "a.txt")
-	b := filepath.Join(dir, "b.txt")
+	a := filepath.Join(dir, "requirements-old.txt")
+	b := filepath.Join(dir, "requirements-new.txt")
 	os.WriteFile(a, []byte("# empty\n"), 0644)
 	os.WriteFile(b, []byte("# also empty\n"), 0644)
 

@@ -43,10 +43,10 @@ func (c *ProvenanceChecker) Check(packages []scanner.Package) []signal.Signal {
 		default:
 			continue
 		}
-		checked++
 		if repo == "" {
 			continue
 		}
+		checked++
 		found, err := c.repoHasVersionTag(repo, pkg.Version)
 		if err != nil {
 			out = append(out, signal.Signal{

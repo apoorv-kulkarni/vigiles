@@ -160,15 +160,28 @@ func (c *HeuristicChecker) checkSuspiciousPersistence() []signal.Signal {
 		}
 	}
 
-	for _, p := range []string{"/tmp/tpcp.tar.gz", "/tmp/session.key", "/tmp/payload.enc", "/tmp/.pg_state", "/tmp/pglog"} {
-		if _, err := os.Stat(p); err == nil {
-			signals = append(signals, signal.Signal{
-				Package: "system", Version: "", Ecosystem: "system",
-				Type: "system-heuristic", Severity: "critical",
-				ID:      "VIGILES-EXFIL-ARTIFACT",
-				Summary: fmt.Sprintf("Supply chain attack artifact found: %s", p),
-				Details: "This file matches known exfiltration artifacts from the TeamPCP campaign.",
-			})
+	tmpDirs := []string{"/tmp"}
+	if userTmp := os.Getenv("TMPDIR"); userTmp != "" && userTmp != "/tmp" {
+		tmpDirs = append(tmpDirs, userTmp)
+	}
+	artifactNames := []string{"tpcp.tar.gz", "session.key", "payload.enc", ".pg_state", "pglog"}
+	seen := map[string]bool{}
+	for _, dir := range tmpDirs {
+		for _, name := range artifactNames {
+			p := filepath.Join(dir, name)
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			if _, err := os.Stat(p); err == nil {
+				signals = append(signals, signal.Signal{
+					Package: "system", Version: "", Ecosystem: "system",
+					Type: "system-heuristic", Severity: "critical",
+					ID:      "VIGILES-EXFIL-ARTIFACT",
+					Summary: fmt.Sprintf("Supply chain attack artifact found: %s", p),
+					Details: "This file matches known exfiltration artifacts from the TeamPCP campaign.",
+				})
+			}
 		}
 	}
 
@@ -205,6 +218,9 @@ var knownGoodPackages = map[string]struct{}{
 	"numpydoc": {}, "pandas_stubs": {}, "flask_cors": {}, "flask_login": {},
 	"djangorestframework": {}, "boto3_stubs": {}, "httpx": {}, "aiohttp": {},
 	"uvicorn": {}, "gunicorn": {}, "pydantic_core": {},
+	// Common packages that trigger edit-distance-1 false positives
+	"pip_audit": {}, "python_dateutil": {}, "ruff": {}, "uv": {},
+	"pytest_asyncio": {}, "black": {}, "mypy": {},
 }
 
 func isSuspiciousVersion(version string) bool {
