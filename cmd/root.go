@@ -43,12 +43,12 @@ var validDiffFormats = map[string]bool{"table": true, "json": true}
 
 // validFailOnTypes is the set of accepted --fail-on values.
 var validFailOnTypes = map[string]bool{
-	"vulnerability":   true,
-	"heuristic":       true,
+	"vulnerability":    true,
+	"heuristic":        true,
 	"system-heuristic": true,
-	"trust-signal":    true,
-	"all":             true,
-	"none":            true,
+	"trust-signal":     true,
+	"all":              true,
+	"none":             true,
 }
 
 type scanOptions struct {
