@@ -20,11 +20,15 @@ func (noopNpmRiskChecker) CheckNewPackage(name, version string) []signal.Signal 
 	return nil
 }
 
+func (noopNpmRiskChecker) CheckVersionChange(name, oldVersion, newVersion string) []signal.Signal {
+	return nil
+}
+
 func TestMain(m *testing.M) {
 	origRecency := newRecencyChecker
 	origNpmRisk := newNpmRiskChecker
 	newRecencyChecker = func() recencyVersionChecker { return noopRecencyChecker{} }
-	newNpmRiskChecker = func() npmNewPackageRiskChecker { return noopNpmRiskChecker{} }
+	newNpmRiskChecker = func() npmRiskChecker { return noopNpmRiskChecker{} }
 	code := m.Run()
 	newRecencyChecker = origRecency
 	newNpmRiskChecker = origNpmRisk
@@ -296,6 +300,12 @@ type stubNpmRiskChecker struct {
 	name   string
 	ver    string
 	sigs   []signal.Signal
+
+	changeCalled bool
+	changeName   string
+	changeOldVer string
+	changeNewVer string
+	changeSigs   []signal.Signal
 }
 
 func (s *stubNpmRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
@@ -303,6 +313,14 @@ func (s *stubNpmRiskChecker) CheckNewPackage(name, version string) []signal.Sign
 	s.name = name
 	s.ver = version
 	return s.sigs
+}
+
+func (s *stubNpmRiskChecker) CheckVersionChange(name, oldVersion, newVersion string) []signal.Signal {
+	s.changeCalled = true
+	s.changeName = name
+	s.changeOldVer = oldVersion
+	s.changeNewVer = newVersion
+	return s.changeSigs
 }
 
 func TestComputeDiff_NewDependencySignal(t *testing.T) {
@@ -396,7 +414,7 @@ func TestComputeDiff_NewNpmRiskSignal(t *testing.T) {
 			Type: "heuristic", Severity: "high", ID: "VIGILES-SUSPICIOUS-NEW-NPM-PACKAGE",
 		}},
 	}
-	newNpmRiskChecker = func() npmNewPackageRiskChecker { return riskStub }
+	newNpmRiskChecker = func() npmRiskChecker { return riskStub }
 
 	entries := computeDiff(
 		map[string]string{"axios": "1.14.0"},
@@ -427,6 +445,169 @@ func TestComputeDiff_NewNpmRiskSignal(t *testing.T) {
 	}
 	if !hasSignal {
 		t.Fatal("expected suspicious new npm package signal on added dependency")
+	}
+}
+
+func TestComputeDiff_NpmVersionChangeRouting(t *testing.T) {
+	oldNpmRisk := newNpmRiskChecker
+	t.Cleanup(func() { newNpmRiskChecker = oldNpmRisk })
+
+	riskStub := &stubNpmRiskChecker{
+		changeSigs: []signal.Signal{{
+			Package: "axios", Version: "1.14.1", Ecosystem: "npm",
+			Type: "heuristic", Severity: "medium", ID: "VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE",
+		}},
+	}
+	newNpmRiskChecker = func() npmRiskChecker { return riskStub }
+
+	entries := computeDiff(
+		map[string]string{"axios": "1.14.0"},
+		map[string]string{"axios": "1.14.1"},
+		"npm",
+	)
+	if len(entries) != 1 || entries[0].Status != Updated {
+		t.Fatalf("expected 1 updated entry, got %+v", entries)
+	}
+
+	if !riskStub.changeCalled {
+		t.Fatal("expected version change checker to be called for updated npm dependency")
+	}
+	if riskStub.changeName != "axios" || riskStub.changeOldVer != "1.14.0" || riskStub.changeNewVer != "1.14.1" {
+		t.Errorf("unexpected call: %s %s -> %s", riskStub.changeName, riskStub.changeOldVer, riskStub.changeNewVer)
+	}
+	if riskStub.called {
+		t.Error("did not expect new-package check on an updated dependency")
+	}
+
+	found := false
+	for _, sig := range entries[0].Signals {
+		if sig.ID == "VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected lifecycle script change signal on updated entry")
+	}
+}
+
+func TestEvaluateVersionChangeRisk(t *testing.T) {
+	meta := func(version, publisher string, scripts map[string]string) npmVersionMetadata {
+		m := npmVersionMetadata{Name: "axios", Version: version, Scripts: scripts}
+		m.NpmUser.Name = publisher
+		return m
+	}
+
+	tests := []struct {
+		name       string
+		old, new   npmVersionMetadata
+		wantIDs    []string
+		wantSevMap map[string]string
+	}{
+		{
+			name: "benign bump emits nothing",
+			old:  meta("1.0.0", "evanw", map[string]string{"test": "jest"}),
+			new:  meta("1.0.1", "evanw", map[string]string{"test": "jest"}),
+		},
+		{
+			name:       "hook added",
+			old:        meta("1.0.0", "evanw", nil),
+			new:        meta("1.0.1", "evanw", map[string]string{"postinstall": "node install.js"}),
+			wantIDs:    []string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE"},
+			wantSevMap: map[string]string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE": "medium"},
+		},
+		{
+			name: "obfuscated hook added is high severity",
+			old:  meta("1.0.0", "evanw", nil),
+			new: meta("1.0.1", "evanw", map[string]string{
+				"postinstall": "node -e \"eval(Buffer.from(p,'base64').toString())\"",
+			}),
+			wantIDs:    []string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE"},
+			wantSevMap: map[string]string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE": "high"},
+		},
+		{
+			name:    "unchanged hook emits nothing",
+			old:     meta("1.0.0", "evanw", map[string]string{"postinstall": "node install.js"}),
+			new:     meta("1.0.1", "evanw", map[string]string{"postinstall": "node install.js"}),
+			wantIDs: nil,
+		},
+		{
+			name:       "modified hook",
+			old:        meta("1.0.0", "evanw", map[string]string{"postinstall": "node install.js"}),
+			new:        meta("1.0.1", "evanw", map[string]string{"postinstall": "node other.js"}),
+			wantIDs:    []string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE"},
+			wantSevMap: map[string]string{"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE": "medium"},
+		},
+		{
+			name:    "prepare hook is ignored: it does not run for consumers",
+			old:     meta("1.0.0", "evanw", nil),
+			new:     meta("1.0.1", "evanw", map[string]string{"prepare": "husky install"}),
+			wantIDs: nil,
+		},
+		{
+			name:       "publisher change",
+			old:        meta("1.0.0", "evanw", nil),
+			new:        meta("1.0.1", "someone-else", nil),
+			wantIDs:    []string{"VIGILES-NPM-PUBLISHER-CHANGE"},
+			wantSevMap: map[string]string{"VIGILES-NPM-PUBLISHER-CHANGE": "info"},
+		},
+		{
+			name:    "missing publisher metadata is not a change",
+			old:     meta("1.0.0", "", nil),
+			new:     meta("1.0.1", "evanw", nil),
+			wantIDs: nil,
+		},
+		{
+			name: "hook and publisher change together",
+			old:  meta("1.0.0", "evanw", map[string]string{"install": "node old.js"}),
+			new:  meta("1.0.1", "someone-else", map[string]string{"install": "node old.js", "postinstall": "node x.js"}),
+			wantIDs: []string{
+				"VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE",
+				"VIGILES-NPM-PUBLISHER-CHANGE",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evaluateVersionChangeRisk(tt.old, tt.new)
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("expected %d signals %v, got %d: %+v", len(tt.wantIDs), tt.wantIDs, len(got), got)
+			}
+			for i, id := range tt.wantIDs {
+				if got[i].ID != id {
+					t.Errorf("signal %d: expected ID %s, got %s", i, id, got[i].ID)
+				}
+				if want, ok := tt.wantSevMap[id]; ok && got[i].Severity != want {
+					t.Errorf("signal %s: expected severity %s, got %s", id, want, got[i].Severity)
+				}
+				if got[i].Remediation == "" {
+					t.Errorf("signal %s: expected a remediation hint", id)
+				}
+			}
+		})
+	}
+}
+
+func TestExactNpmVersion(t *testing.T) {
+	tests := []struct {
+		in     string
+		want   string
+		wantOK bool
+	}{
+		{"1.2.3", "1.2.3", true},
+		{" 1.2.3 ", "1.2.3", true},
+		{"^1.2.3", "", false},
+		{"~1.2.3", "", false},
+		{">=1.2.3", "", false},
+		{"1.2.*", "", false},
+		{"1.0.0 || 2.0.0", "", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := exactNpmVersion(tt.in)
+		if got != tt.want || ok != tt.wantOK {
+			t.Errorf("exactNpmVersion(%q) = %q,%v; want %q,%v", tt.in, got, ok, tt.want, tt.wantOK)
+		}
 	}
 }
 

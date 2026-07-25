@@ -59,11 +59,12 @@ var newRecencyChecker = func() recencyVersionChecker {
 	return checker.NewRecencyChecker()
 }
 
-type npmNewPackageRiskChecker interface {
+type npmRiskChecker interface {
 	CheckNewPackage(name, version string) []signal.Signal
+	CheckVersionChange(name, oldVersion, newVersion string) []signal.Signal
 }
 
-var newNpmRiskChecker = func() npmNewPackageRiskChecker {
+var newNpmRiskChecker = func() npmRiskChecker {
 	return &npmRegistryRiskChecker{
 		client: &http.Client{Timeout: 4 * time.Second},
 	}
@@ -108,14 +109,14 @@ func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 				Name: name, Ecosystem: ecosystem,
 				Status: Added, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem, true, recency, npmRisk)
+			e.Signals = annotate(name, "", newVer, ecosystem, true, recency, npmRisk)
 			entries = append(entries, e)
 		} else if oldVer != newVer {
 			e := Entry{
 				Name: name, Ecosystem: ecosystem,
 				Status: Updated, OldVersion: oldVer, NewVersion: newVer,
 			}
-			e.Signals = annotate(name, newVer, ecosystem, false, recency, npmRisk)
+			e.Signals = annotate(name, oldVer, newVer, ecosystem, false, recency, npmRisk)
 			entries = append(entries, e)
 		}
 	}
@@ -154,7 +155,8 @@ func statusOrder(s Status) int {
 }
 
 // annotate runs applicable risk signals on a changed dependency.
-func annotate(name, version, ecosystem string, isNew bool, recency recencyVersionChecker, npmRisk npmNewPackageRiskChecker) []signal.Signal {
+// oldVersion is empty when the dependency is newly added.
+func annotate(name, oldVersion, version, ecosystem string, isNew bool, recency recencyVersionChecker, npmRisk npmRiskChecker) []signal.Signal {
 	var signals []signal.Signal
 
 	// New dependency in the new graph vs old graph.
@@ -200,8 +202,12 @@ func annotate(name, version, ecosystem string, isNew bool, recency recencyVersio
 			}
 		}
 	}
-	if isNew && ecosystem == "npm" && npmRisk != nil {
-		signals = append(signals, npmRisk.CheckNewPackage(name, version)...)
+	if ecosystem == "npm" && npmRisk != nil {
+		if isNew {
+			signals = append(signals, npmRisk.CheckNewPackage(name, version)...)
+		} else {
+			signals = append(signals, npmRisk.CheckVersionChange(name, oldVersion, version)...)
+		}
 	}
 
 	return signals
@@ -232,8 +238,8 @@ type npmRegistryRiskChecker struct {
 }
 
 func (c *npmRegistryRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
-	v := strings.TrimSpace(version)
-	if v == "" || strings.ContainsAny(v, "^~<>*| ") {
+	v, ok := exactNpmVersion(version)
+	if !ok {
 		return nil
 	}
 
@@ -242,6 +248,37 @@ func (c *npmRegistryRiskChecker) CheckNewPackage(name, version string) []signal.
 		return nil
 	}
 	return evaluateNewNpmScriptRisk(meta.Name, meta.Version, meta.Scripts)
+}
+
+// CheckVersionChange compares registry metadata for the old and new version of
+// an updated dependency, surfacing install-time behavior that changed between
+// them. Registry lookups are best-effort: a failure yields no signals.
+func (c *npmRegistryRiskChecker) CheckVersionChange(name, oldVersion, newVersion string) []signal.Signal {
+	oldV, okOld := exactNpmVersion(oldVersion)
+	newV, okNew := exactNpmVersion(newVersion)
+	if !okOld || !okNew {
+		return nil
+	}
+
+	oldMeta, ok := c.fetchPackageVersion(name, oldV)
+	if !ok {
+		return nil
+	}
+	newMeta, ok := c.fetchPackageVersion(name, newV)
+	if !ok {
+		return nil
+	}
+	return evaluateVersionChangeRisk(oldMeta, newMeta)
+}
+
+// exactNpmVersion reports whether a spec is an exact version the registry can
+// resolve. Ranges are skipped because they don't identify a single release.
+func exactNpmVersion(version string) (string, bool) {
+	v := strings.TrimSpace(version)
+	if v == "" || strings.ContainsAny(v, "^~<>*| ") {
+		return "", false
+	}
+	return v, true
 }
 
 func (c *npmRegistryRiskChecker) fetchPackageVersion(name, version string) (npmVersionMetadata, bool) {
@@ -274,14 +311,27 @@ type npmVersionMetadata struct {
 	Name    string            `json:"name"`
 	Version string            `json:"version"`
 	Scripts map[string]string `json:"scripts"`
+
+	// NpmUser is the account that published this specific version.
+	NpmUser struct {
+		Name string `json:"name"`
+	} `json:"_npmUser"`
 }
+
+// riskScripts are the npm lifecycle hooks that run at install time.
+var riskScripts = []string{"preinstall", "install", "postinstall", "prepare"}
+
+// dependencyInstallScripts are the hooks that run when npm installs a package
+// as a dependency. "prepare" is excluded: it runs in the package's own
+// directory or on a git install, not for consumers installing from the
+// registry, so changes to it are noise in a dependency diff.
+var dependencyInstallScripts = []string{"preinstall", "install", "postinstall"}
 
 func evaluateNewNpmScriptRisk(name, version string, scripts map[string]string) []signal.Signal {
 	if isPopularNpmPackage(name) || len(scripts) == 0 {
 		return nil
 	}
 
-	riskScripts := []string{"preinstall", "install", "postinstall", "prepare"}
 	var suspicious []string
 	var firstCmd string
 	for _, scriptName := range riskScripts {
@@ -314,6 +364,111 @@ func evaluateNewNpmScriptRisk(name, version string, scripts map[string]string) [
 		),
 		Remediation: fmt.Sprintf("Pin and review %s@%s before allowing install; consider blocking until provenance is verified.", name, version),
 	}}
+}
+
+// evaluateVersionChangeRisk reports what changed about a package's install-time
+// behavior between two published versions. Unlike the new-package rule, popular
+// packages are not exempt: a trusted package gaining an install hook is exactly
+// the compromise pattern this is meant to catch.
+func evaluateVersionChangeRisk(oldMeta, newMeta npmVersionMetadata) []signal.Signal {
+	var signals []signal.Signal
+
+	if sig := lifecycleScriptChangeSignal(oldMeta, newMeta); sig != nil {
+		signals = append(signals, *sig)
+	}
+	if sig := publisherChangeSignal(oldMeta, newMeta); sig != nil {
+		signals = append(signals, *sig)
+	}
+
+	return signals
+}
+
+func lifecycleScriptChangeSignal(oldMeta, newMeta npmVersionMetadata) *signal.Signal {
+	var added, changed []string
+	var obfuscated bool
+	snippet := ""
+
+	for _, scriptName := range dependencyInstallScripts {
+		newCmd := strings.TrimSpace(newMeta.Scripts[scriptName])
+		oldCmd := strings.TrimSpace(oldMeta.Scripts[scriptName])
+		if newCmd == "" || newCmd == oldCmd {
+			continue
+		}
+		if oldCmd == "" {
+			added = append(added, scriptName)
+		} else {
+			changed = append(changed, scriptName)
+		}
+		if isObfuscatedInstallerCommand(newCmd) {
+			obfuscated = true
+		}
+		if snippet == "" {
+			snippet = truncateSnippet(newCmd, 100)
+		}
+	}
+
+	if len(added) == 0 && len(changed) == 0 {
+		return nil
+	}
+
+	var parts []string
+	if len(added) > 0 {
+		parts = append(parts, fmt.Sprintf("added (%s)", strings.Join(added, ", ")))
+	}
+	if len(changed) > 0 {
+		parts = append(parts, fmt.Sprintf("modified (%s)", strings.Join(changed, ", ")))
+	}
+
+	severity := "medium"
+	details := fmt.Sprintf(
+		"Install-time behavior differs between %s and %s. Script snippet: %s",
+		oldMeta.Version, newMeta.Version, snippet,
+	)
+	if obfuscated {
+		severity = "high"
+		details = fmt.Sprintf(
+			"Install-time behavior differs between %s and %s, and the new command looks obfuscated. Script snippet: %s",
+			oldMeta.Version, newMeta.Version, snippet,
+		)
+	}
+
+	return &signal.Signal{
+		Package:   newMeta.Name,
+		Version:   newMeta.Version,
+		Ecosystem: "npm",
+		Type:      "heuristic",
+		Severity:  severity,
+		ID:        "VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE",
+		Summary:   fmt.Sprintf("Install-time script %s", strings.Join(parts, " and ")),
+		Details:   details,
+		Remediation: fmt.Sprintf(
+			"Compare %s@%s against %s@%s and confirm the new install-time script is intentional before upgrading.",
+			newMeta.Name, oldMeta.Version, newMeta.Name, newMeta.Version,
+		),
+	}
+}
+
+func publisherChangeSignal(oldMeta, newMeta npmVersionMetadata) *signal.Signal {
+	oldUser := strings.TrimSpace(oldMeta.NpmUser.Name)
+	newUser := strings.TrimSpace(newMeta.NpmUser.Name)
+	if oldUser == "" || newUser == "" || strings.EqualFold(oldUser, newUser) {
+		return nil
+	}
+
+	return &signal.Signal{
+		Package:   newMeta.Name,
+		Version:   newMeta.Version,
+		Ecosystem: "npm",
+		Type:      "trust-signal",
+		Severity:  "info",
+		ID:        "VIGILES-NPM-PUBLISHER-CHANGE",
+		Summary:   fmt.Sprintf("Publisher changed from '%s' to '%s'", oldUser, newUser),
+		Details: fmt.Sprintf(
+			"Version %s was published by '%s'; version %s was published by '%s'. Projects with several maintainers or automated releases change publisher routinely, so this is context rather than evidence of compromise.",
+			oldMeta.Version, oldUser, newMeta.Version, newUser,
+		),
+		Remediation: "Confirm the new publisher is part of the project's expected release process.",
+	}
 }
 
 func isPopularNpmPackage(name string) bool {
