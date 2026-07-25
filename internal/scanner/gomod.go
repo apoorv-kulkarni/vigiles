@@ -29,6 +29,13 @@ func (s *GoModScanner) Scan() ([]Package, error) {
 		return nil, fmt.Errorf("go list -m -json all failed: %w", err)
 	}
 
+	return parseGoModList(out)
+}
+
+// parseGoModList maps `go list -m -json all` output to packages. The command
+// emits a stream of concatenated JSON objects rather than an array. The main
+// module and modules without a version are skipped.
+func parseGoModList(out []byte) ([]Package, error) {
 	type goModule struct {
 		Path    string `json:"Path"`
 		Version string `json:"Version"`

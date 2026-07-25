@@ -51,14 +51,19 @@ func (s *NpmScanner) scanScope(scopeFlag string) ([]Package, error) {
 		return nil, fmt.Errorf("npm list produced no output")
 	}
 
-	var result npmListOutput
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing npm output: %w", err)
-	}
-
 	location := "local"
 	if scopeFlag == "--global" {
 		location = "global"
+	}
+
+	return parseNpmList(out, location)
+}
+
+// parseNpmList maps `npm list --json --depth=0` output to packages.
+func parseNpmList(out []byte, location string) ([]Package, error) {
+	var result npmListOutput
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, fmt.Errorf("parsing npm output: %w", err)
 	}
 
 	packages := make([]Package, 0, len(result.Dependencies))

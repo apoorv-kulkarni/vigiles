@@ -22,6 +22,12 @@ func (s *BrewScanner) Scan() ([]Package, error) {
 		return nil, fmt.Errorf("brew info failed: %w", err)
 	}
 
+	return parseBrewInfo(out)
+}
+
+// parseBrewInfo maps `brew info --json=v2 --installed` output to packages,
+// covering both formulae and casks.
+func parseBrewInfo(out []byte) ([]Package, error) {
 	var result brewInfoOutput
 	if err := json.Unmarshal(out, &result); err != nil {
 		return nil, fmt.Errorf("parsing brew output: %w", err)

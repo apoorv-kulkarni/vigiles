@@ -25,6 +25,13 @@ func (s *CargoScanner) Scan() ([]Package, error) {
 		return nil, fmt.Errorf("cargo install --list failed: %w", err)
 	}
 
+	return parseCargoList(out)
+}
+
+// parseCargoList maps `cargo install --list` output to packages. The listing
+// puts each crate on a `name vX.Y.Z:` header line with its binaries indented
+// beneath, so only header lines are collected.
+func parseCargoList(out []byte) ([]Package, error) {
 	lineRe := regexp.MustCompile(`^([^\s]+)\s+v([^:]+):$`)
 	var pkgs []Package
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))

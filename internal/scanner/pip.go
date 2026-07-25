@@ -34,6 +34,15 @@ func (s *PipScanner) Scan() ([]Package, error) {
 		return nil, fmt.Errorf("pip list failed: %w", err)
 	}
 
+	// Also get the list of user-installed (direct) packages for the Direct flag
+	directSet := s.getDirectPackages(pipCmd)
+
+	return parsePipList(out, directSet)
+}
+
+// parsePipList maps `pip list --format json` output to packages. Names present
+// in directSet are flagged as direct dependencies.
+func parsePipList(out []byte, directSet map[string]struct{}) ([]Package, error) {
 	var pipPkgs []struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
@@ -41,9 +50,6 @@ func (s *PipScanner) Scan() ([]Package, error) {
 	if err := json.Unmarshal(out, &pipPkgs); err != nil {
 		return nil, fmt.Errorf("parsing pip output: %w", err)
 	}
-
-	// Also get the list of user-installed (direct) packages for the Direct flag
-	directSet := s.getDirectPackages(pipCmd)
 
 	packages := make([]Package, 0, len(pipPkgs))
 	for _, p := range pipPkgs {
@@ -72,14 +78,20 @@ func (s *PipScanner) findPip() string {
 // getDirectPackages returns a set of package names that were explicitly
 // installed (not pulled in as transitive deps). Best effort.
 func (s *PipScanner) getDirectPackages(pipCmd string) map[string]struct{} {
-	set := make(map[string]struct{})
-
 	// pip list --not-required shows packages nothing else depends on
 	// This is an approximation of "direct" dependencies
 	out, err := exec.Command(pipCmd, "list", "--not-required", "--format", "json").Output()
 	if err != nil {
-		return set
+		return map[string]struct{}{}
 	}
+	return parsePipDirect(out)
+}
+
+// parsePipDirect maps `pip list --not-required` output to a set of lowercased
+// package names. Unparseable output yields an empty set rather than an error,
+// since the Direct flag is best effort.
+func parsePipDirect(out []byte) map[string]struct{} {
+	set := make(map[string]struct{})
 
 	var pkgs []struct {
 		Name string `json:"name"`
