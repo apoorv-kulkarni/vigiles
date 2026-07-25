@@ -2,8 +2,8 @@
 
 ## Document status
 
-- Version: v0.2
-- Date: 2026-04-11
+- Version: v0.3
+- Date: 2026-07-25
 - Owner: Vigiles maintainers
 - Horizon: Next 2 releases (v0.3.x to v0.4.x)
 - Story evidence policy: User stories in this document are planning hypotheses unless marked validated.
@@ -93,6 +93,19 @@ Confidence legend:
   - `--watch --watch-interval 2m` loops until interrupted.
   - `--notify` emits host notification on newly observed findings.
 
+### FR-7: Stateful npm diff
+
+- On an updated npm dependency, compare registry metadata for the old and new
+  version instead of only inspecting the new one.
+- Signals: lifecycle script added or changed; publisher (`_npmUser`) change.
+- Acceptance criteria:
+  - A bump from a hook-free version to one defining `postinstall` emits a
+    lifecycle-script-change signal and exits 1 under `--fail-on heuristic`.
+  - A benign version bump emits no heuristic signal and exits 0.
+  - Version ranges are skipped, since they do not identify a single release.
+  - Checks are best-effort: registry failures never change the exit code, and
+    the diff still completes offline.
+
 ## 7. Non-functional requirements
 
 - Single static binary, stdlib-only Go implementation.
@@ -123,11 +136,13 @@ Confidence legend:
 - Improve signal wording to reduce false-positive confusion.
 - Add fixtures and integration tests for trust-signal edge cases.
 
-### Release B (v0.4.x expansion)
+### Release B (v0.4.x depth over breadth)
 
-- Add at least one additional ecosystem scanner (candidate: composer or gem).
+- Ship FR-7 stateful npm diff (lifecycle script change, publisher change).
+- Extend remediation hints to all `VIGILES-*` signals.
 - Improve SARIF richness (rule metadata, remediation guidance).
-- Add optional policy profile for CI gating thresholds.
+- Defer additional ecosystem scanners (composer, gem, nuget) until stateful
+  signals are calibrated against real update history.
 
 ## 10. Risks and mitigations
 
@@ -146,15 +161,24 @@ Confidence legend:
 2. Should trust-signal severity be policy-tunable per organization?
 3. What minimum SARIF fields are required for best GitHub Code Scanning UX?
 4. Which ecosystem should be prioritized next: composer, gem, or nuget?
+   Deferred in Release B; revisit after FR-7 lands.
+5. What size delta on an npm `unpackedSize` change is worth a signal without
+   flooding users with false positives?
 
 ## 12. Assumptions to validate
 
 1. Teams want trust signals in CI even when they are non-blocking.
 2. Provenance and attestation checks provide enough value despite external API variability.
 3. Summary and SARIF formats cover the most common automation use cases.
-4. Cross-ecosystem breadth is more valuable than deeper single-ecosystem analysis for current users.
+4. ~~Cross-ecosystem breadth is more valuable than deeper single-ecosystem
+   analysis for current users.~~ Rejected 2026-07-25: breadth without stateful
+   signals leaves Vigiles a thinner OSV wrapper, and install-time attacks
+   concentrate in npm and PyPI.
 
 ## 13. Decision log
 
 - 2026-04-11: Adopt lightweight PRD format and keep roadmap aligned to measurable acceptance criteria.
 - 2026-04-11: Mark user stories as evidence-scoped hypotheses to avoid conflating assumptions with validated user needs.
+- 2026-07-25: Prioritize depth (FR-7 stateful npm diff) over new ecosystem scanners for v0.4.
+- 2026-07-25: Scope stateful diff to npm only. The PyPI JSON API exposes no per-release publisher identity, so publisher-change detection is not implementable for pip.
+- 2026-07-25: Drop the `vigiles baseline` command from v0.4. The stateful diff needs no persisted state.

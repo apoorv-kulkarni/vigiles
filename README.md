@@ -42,6 +42,7 @@ Vigiles doesn't replace existing tools — it fills gaps between them.
 | Dependency diff with risk signals | Nothing packaged | ✅ requirements.txt + package.json |
 | npm install script detection | Nothing packaged | ✅ Flags lifecycle hooks |
 | Suspicious new npm dependency detection (diff) | Rare in CLI scanners | ✅ High-signal rule for obfuscated install hooks in newly added packages |
+| Behavioral change across npm versions (diff) | Nothing packaged | ✅ Flags install hooks and publisher changing on an update |
 | Recently published version check | Nothing packaged | ✅ PyPI versions < 7 days old |
 | Unpinned version detection | Various linters | ✅ Flags ranges and missing pins |
 | Cross-ecosystem local scan | Run tools separately | ✅ pip + npm + brew |
@@ -128,6 +129,39 @@ Example:
   ~ requests                       ==2.31.0 → ==2.32.0
   - boto3                          ==1.28.0
 ```
+
+#### npm update checks
+
+When an npm dependency is **updated** between exact versions, Vigiles compares
+registry metadata for both versions and reports what changed about install-time
+behavior. Unlike the new-package rule, popular packages are not exempt: a
+trusted package that suddenly gains an install hook is exactly the pattern worth
+catching.
+
+```text
+  ~ axios                          0.19.0 → 1.7.2
+    ℹ️ VIGILES-NPM-PUBLISHER-CHANGE: Publisher changed from 'emilyemorehouse' to 'jasonsaayman'
+  ~ esbuild                        0.19.0 → 0.21.5
+  ~ puppeteer                      1.0.0 → 22.0.0
+    🟡 VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE: Install-time script added (postinstall)
+    ℹ️ VIGILES-NPM-PUBLISHER-CHANGE: Publisher changed from 'aslushnikov' to 'google-wombot'
+  ~ sharp                          0.28.0 → 0.33.0
+    🟡 VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE: Install-time script modified (install)
+```
+
+| Signal | Type | Severity |
+| ------ | ---- | -------- |
+| `VIGILES-NPM-LIFECYCLE-SCRIPT-CHANGE` | `heuristic` | `high` if the new command looks obfuscated, otherwise `medium` |
+| `VIGILES-NPM-PUBLISHER-CHANGE` | `trust-signal` | `info` |
+
+A publisher change is common for projects with several maintainers or automated
+releases, so it is context rather than evidence of compromise. Both checks are
+best-effort: version ranges are skipped because they don't identify a single
+release, and a registry failure produces no signals rather than an error.
+
+Only `preinstall`, `install`, and `postinstall` are compared. `prepare` is
+excluded because it does not run for consumers installing from the registry, so
+changes to it are noise in a dependency diff.
 
 ## Project configuration (.vigiles.yaml)
 
@@ -262,7 +296,7 @@ Vigiles provides **informational signals**, not security guarantees.
 - **Homebrew packages are not checked for CVEs.** No OSV ecosystem mapping exists for Homebrew. Vigiles inventories brew packages but cannot check them for known vulnerabilities.
 - **Heuristic checks use pattern matching.** Typosquatting detection (edit distance), `.pth` file scanning, and persistence detection can produce false positives and will miss novel techniques.
 - **Trust signals are informational, not conclusive.** A recently published version is not inherently malicious. An npm install script is not inherently dangerous. These signals provide context for human judgment.
-- **Diff npm checks may call npm registry.** For newly added npm packages with exact versions, Vigiles may query package metadata to inspect lifecycle scripts.
+- **Diff npm checks may call npm registry.** For npm packages pinned to exact versions, Vigiles queries package metadata to inspect lifecycle scripts: one request for a newly added package, and two for an update (the old and the new version). Metadata is not cached across packages.
 - **Recency checks make live PyPI API calls.** One HTTP request per pip package (cached per scan). Use `--skip-recency` if this is too slow or you're offline.
 - **Popular package lists are hardcoded.** Typosquatting detection compares against a static list of ~40 popular packages per ecosystem. This list will go stale over time.
 
@@ -293,11 +327,29 @@ Vigiles provides **informational signals**, not security guarantees.
 
 ### v0.4 — signal quality and stateful detection
 
-- [ ] Stateful diff — detect behavioral changes between versions (new lifecycle scripts, maintainer changes, package size delta)
-- [ ] Baseline system — `vigiles baseline create` / `vigiles baseline diff` for tracking known state
+This release prioritizes depth on the ecosystems where install-time attacks
+actually land over breadth across new ecosystems.
+
+- [x] Stateful npm diff: compare registry metadata across versions on update, not only on first install
+  - [x] Lifecycle script added or changed between the old and new version
+  - [x] Publisher (`_npmUser`) change between the old and new version
 - [ ] `go.sum` diff support
 - [ ] Refresh popular package lists from a versioned JSON source
-- [ ] Better signal explanations — human-readable reasoning, not just labels
+- [ ] Remediation coverage: give every `VIGILES-*` signal an actionable fix hint (today only OSV findings and suspicious new npm packages have one)
+
+Deferred, with reasons:
+
+- **Baseline command** (`vigiles baseline create` / `vigiles baseline diff`): the
+  stateful diff above needs no persisted state, so a state file, schema, and
+  staleness handling buy little right now.
+- **Stateful pip diff**: the PyPI JSON API exposes no per-release publisher
+  identity, and `info.maintainer` is frequently absent, so publisher-change
+  detection is not implementable there. Artifact size and upload time stay
+  open as narrower follow-ups.
+- **Package size delta**: needs false-positive calibration against real update
+  history before it earns a signal.
+- **New ecosystem scanners** (composer, gem, nuget): revisit once the stateful
+  signals above are calibrated.
 
 ## See also
 
