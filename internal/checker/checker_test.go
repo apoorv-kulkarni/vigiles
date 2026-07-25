@@ -313,3 +313,96 @@ func TestOSV_RemediationFromVuln(t *testing.T) {
 		t.Fatalf("expected generic pip remediation, got: %s", msg)
 	}
 }
+
+func TestOSV_RemediationFromVulnPerEcosystem(t *testing.T) {
+	tests := []struct {
+		ecosystem string
+		want      string
+	}{
+		{"npm", "maintained release"},
+		{"cargo", "safer, supported version"},
+		{"", "safer, supported version"},
+	}
+	for _, tt := range tests {
+		msg := remediationFromVuln("pkg", tt.ecosystem, osvVuln{})
+		if !strings.Contains(msg, tt.want) {
+			t.Errorf("remediationFromVuln(%q) = %q, want it to mention %q", tt.ecosystem, msg, tt.want)
+		}
+	}
+}
+
+func TestOSV_RemediationCapsFixedVersions(t *testing.T) {
+	vuln := osvVuln{
+		Affected: []osvAffected{{
+			Ranges: []osvRange{{Events: []osvEvent{
+				{Fixed: "1.0.0"}, {Fixed: "2.0.0"}, {Fixed: "3.0.0"}, {Fixed: "4.0.0"},
+			}}},
+		}},
+	}
+	msg := remediationFromVuln("pkg", "pip", vuln)
+	if !strings.Contains(msg, "3.0.0") {
+		t.Errorf("expected the first three fixed versions, got: %s", msg)
+	}
+	if strings.Contains(msg, "4.0.0") {
+		t.Errorf("expected the list capped at three versions, got: %s", msg)
+	}
+}
+
+func TestOSV_ClassifySeverityFromScore(t *testing.T) {
+	vuln := osvVuln{Severity: []osvSeverity{{Score: "9.1"}}}
+	if got := classifySeverity(vuln); got != "critical" {
+		t.Errorf("classifySeverity with score 9.1 = %q, want critical", got)
+	}
+
+	// A CVSS vector string is not a bare number, so it cannot be classified.
+	vector := osvVuln{Severity: []osvSeverity{{Score: "CVSS:3.1/AV:N/AC:L"}}}
+	if got := classifySeverity(vector); got != "unknown" {
+		t.Errorf("classifySeverity with a vector string = %q, want unknown", got)
+	}
+}
+
+func TestExtractUploadTime(t *testing.T) {
+	iso := pypiVersionResponse{Urls: []pypiFile{{UploadTimeISO: "2026-03-25T10:00:00Z"}}}
+	if got := extractUploadTime(iso); got.IsZero() {
+		t.Error("expected the ISO 8601 field to parse")
+	}
+
+	// Older PyPI payloads only carry the non-ISO upload_time field.
+	legacy := pypiVersionResponse{Urls: []pypiFile{{UploadTime: "2026-03-25T10:00:00"}}}
+	got := extractUploadTime(legacy)
+	if got.IsZero() {
+		t.Fatal("expected the legacy upload_time field to parse")
+	}
+	if got.Year() != 2026 || got.Month() != time.March {
+		t.Errorf("unexpected parsed time: %v", got)
+	}
+
+	unparseable := pypiVersionResponse{Urls: []pypiFile{{UploadTimeISO: "not-a-date", UploadTime: "also-not"}}}
+	if !extractUploadTime(unparseable).IsZero() {
+		t.Error("expected a zero time when neither field parses")
+	}
+}
+
+func TestIsExactlyPinned(t *testing.T) {
+	tests := []struct {
+		spec      string
+		ecosystem string
+		want      bool
+	}{
+		{"==1.2.3", "pip", true},
+		{">=1.2.3", "pip", false},
+		{"==1.2.*", "pip", false},
+		{"1.2.3", "pip", false}, // pip requires the == operator
+		{"1.2.3", "npm", true},
+		{"^1.2.3", "npm", false},
+		{"~1.2.3", "npm", false},
+		{"1.x", "npm", true}, // no range operator, so treated as exact
+		{"  ", "npm", false},
+		{"1.2.3", "cargo", false}, // unsupported ecosystem
+	}
+	for _, tt := range tests {
+		if got := IsExactlyPinned(tt.spec, tt.ecosystem); got != tt.want {
+			t.Errorf("IsExactlyPinned(%q, %q) = %v, want %v", tt.spec, tt.ecosystem, got, tt.want)
+		}
+	}
+}
