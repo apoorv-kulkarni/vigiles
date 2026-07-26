@@ -1,13 +1,18 @@
 BINARY := vigiles
 GOFLAGS := -ldflags "-s -w"
 
-.PHONY: build test vet clean install run
+.PHONY: build test test-live vet clean install run
 
 build:
 	go build $(GOFLAGS) -o $(BINARY) .
 
 test:
 	go test ./... -v -count=1
+
+# Contract tests against the live OSV API. Kept out of `test` so CI stays
+# offline-safe; run these when changing the OSV integration.
+test-live:
+	go test ./internal/checker/ -tags osvlive -run 'TestLive' -v -count=1
 
 vet:
 	go vet ./...

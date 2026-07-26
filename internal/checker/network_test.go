@@ -2,9 +2,11 @@ package checker
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,29 +22,83 @@ func interceptClient(server *httptest.Server) *http.Client {
 
 // --- OSV ---
 
-func TestOSVCheckerCheck(t *testing.T) {
-	var gotQueries int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// osvServer stands in for the two endpoints Vigiles uses. querybatch answers
+// with abbreviated entries carrying only an ID, exactly as the real API does,
+// so any test asserting on summary, severity, aliases, or fixed versions is
+// necessarily proving that the detail lookup ran.
+type osvServer struct {
+	mu        sync.Mutex
+	batchReqs []osvBatchRequest
+	detailIDs []string
+
+	// batch returns the response for the nth querybatch call (1-indexed).
+	batch func(call int, req osvBatchRequest) osvBatchResponse
+	// detail returns the full record for an ID, or ok=false to serve a 500.
+	detail func(id string) (osvVuln, bool)
+}
+
+func (s *osvServer) handler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if id, isDetail := strings.CutPrefix(r.URL.Path, "/v1/vulns/"); isDetail {
+			s.mu.Lock()
+			s.detailIDs = append(s.detailIDs, id)
+			s.mu.Unlock()
+
+			vuln, ok := s.detail(id)
+			if !ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(vuln)
+			return
+		}
+
 		var req osvBatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decoding request: %v", err)
 		}
-		gotQueries = len(req.Queries)
+		s.mu.Lock()
+		s.batchReqs = append(s.batchReqs, req)
+		call := len(s.batchReqs)
+		s.mu.Unlock()
 
-		// One result per query, in order. Only the first carries a vuln.
-		resp := osvBatchResponse{Results: make([]osvResult, len(req.Queries))}
-		if len(resp.Results) > 0 {
-			resp.Results[0].Vulns = []osvVuln{{
-				ID:       "GHSA-xxxx",
+		json.NewEncoder(w).Encode(s.batch(call, req))
+	}
+}
+
+// abbreviated builds the ID-only response shape that querybatch really returns.
+func abbreviated(req osvBatchRequest, vulnsByQuery map[int][]string) osvBatchResponse {
+	resp := osvBatchResponse{Results: make([]osvResult, len(req.Queries))}
+	for i, ids := range vulnsByQuery {
+		if i >= len(resp.Results) {
+			continue
+		}
+		for _, id := range ids {
+			resp.Results[i].Vulns = append(resp.Results[i].Vulns, osvVuln{ID: id})
+		}
+	}
+	return resp
+}
+
+func TestOSVCheckerCheck(t *testing.T) {
+	osv := &osvServer{
+		batch: func(_ int, req osvBatchRequest) osvBatchResponse {
+			return abbreviated(req, map[int][]string{0: {"GHSA-xxxx"}})
+		},
+		detail: func(id string) (osvVuln, bool) {
+			return osvVuln{
+				ID:       id,
 				Summary:  "test vulnerability",
 				Aliases:  []string{"CVE-2026-0001"},
-				Severity: []osvSeverity{{Type: "CVSS_V3", Score: "9.8"}},
+				Severity: []osvSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}},
 				Affected: []osvAffected{{Ranges: []osvRange{{Events: []osvEvent{{Fixed: "2.0.0"}}}}}},
-			}}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
+			}, true
+		},
+	}
+	server := httptest.NewServer(osv.handler(t))
 	defer server.Close()
 
 	c := &OSVChecker{client: interceptClient(server)}
@@ -54,8 +110,8 @@ func TestOSVCheckerCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotQueries != 2 {
-		t.Errorf("expected brew to be filtered out, got %d queries", gotQueries)
+	if got := len(osv.batchReqs[0].Queries); got != 2 {
+		t.Errorf("expected brew to be filtered out, got %d queries", got)
 	}
 	if len(sigs) != 1 {
 		t.Fatalf("expected 1 signal, got %d: %+v", len(sigs), sigs)
@@ -65,8 +121,11 @@ func TestOSVCheckerCheck(t *testing.T) {
 	if got.ID != "GHSA-xxxx" || got.Type != "vulnerability" {
 		t.Errorf("unexpected signal: %+v", got)
 	}
+	if got.Summary != "test vulnerability" {
+		t.Errorf("expected the summary from the detail record, got %q", got.Summary)
+	}
 	if got.Severity != "critical" {
-		t.Errorf("expected severity from the CVSS score, got %q", got.Severity)
+		t.Errorf("expected severity scored from the CVSS vector, got %q", got.Severity)
 	}
 	if got.Package != "requests" || got.Ecosystem != "pip" {
 		t.Errorf("expected the signal mapped to the first query, got %+v", got)
@@ -76,6 +135,144 @@ func TestOSVCheckerCheck(t *testing.T) {
 	}
 	if len(got.Aliases) != 1 || got.Aliases[0] != "CVE-2026-0001" {
 		t.Errorf("expected aliases carried through, got %v", got.Aliases)
+	}
+}
+
+// A failed detail lookup must degrade the finding's metadata, never hide the
+// finding. Dropping a real CVE because a follow-up request failed would be the
+// worst possible failure mode for a CI gate.
+func TestOSVCheckerKeepsFindingWhenDetailLookupFails(t *testing.T) {
+	osv := &osvServer{
+		batch: func(_ int, req osvBatchRequest) osvBatchResponse {
+			return abbreviated(req, map[int][]string{0: {"GHSA-broken"}})
+		},
+		detail: func(string) (osvVuln, bool) { return osvVuln{}, false },
+	}
+	server := httptest.NewServer(osv.handler(t))
+	defer server.Close()
+
+	c := &OSVChecker{client: interceptClient(server)}
+	sigs, err := c.Check([]scanner.Package{{Name: "requests", Version: "2.31.0", Ecosystem: "pip"}})
+	if err != nil {
+		t.Fatalf("a detail failure should not fail the batch, got %v", err)
+	}
+	if len(sigs) != 1 {
+		t.Fatalf("expected the finding retained, got %+v", sigs)
+	}
+	if sigs[0].ID != "GHSA-broken" || sigs[0].Severity != "unknown" {
+		t.Errorf("expected an unknown-severity finding keyed by ID, got %+v", sigs[0])
+	}
+	if !strings.Contains(sigs[0].Summary, "GHSA-broken") {
+		t.Errorf("expected the summary to name the ID, got %q", sigs[0].Summary)
+	}
+}
+
+// One advisory commonly affects several installed packages; it should be
+// fetched once.
+func TestOSVCheckerDeduplicatesDetailLookups(t *testing.T) {
+	osv := &osvServer{
+		batch: func(_ int, req osvBatchRequest) osvBatchResponse {
+			return abbreviated(req, map[int][]string{0: {"GHSA-shared"}, 1: {"GHSA-shared"}})
+		},
+		detail: func(id string) (osvVuln, bool) {
+			return osvVuln{ID: id, Summary: "shared advisory"}, true
+		},
+	}
+	server := httptest.NewServer(osv.handler(t))
+	defer server.Close()
+
+	c := &OSVChecker{client: interceptClient(server)}
+	sigs, err := c.Check([]scanner.Package{
+		{Name: "requests", Version: "2.31.0", Ecosystem: "pip"},
+		{Name: "flask", Version: "3.0.0", Ecosystem: "pip"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sigs) != 2 {
+		t.Fatalf("expected both packages flagged, got %+v", sigs)
+	}
+	if len(osv.detailIDs) != 1 {
+		t.Errorf("expected the shared advisory fetched once, got %v", osv.detailIDs)
+	}
+	for _, s := range sigs {
+		if s.Summary != "shared advisory" {
+			t.Errorf("expected both signals hydrated, got %+v", s)
+		}
+	}
+}
+
+// OSV paginates per query, so only the queries that reported more results are
+// replayed, each carrying its own token.
+func TestOSVCheckerPaginatesQueryBatch(t *testing.T) {
+	osv := &osvServer{
+		batch: func(call int, req osvBatchRequest) osvBatchResponse {
+			if call == 1 {
+				resp := abbreviated(req, map[int][]string{0: {"GHSA-page1"}, 1: {"GHSA-other"}})
+				resp.Results[0].NextPageToken = "token-2"
+				return resp
+			}
+			return abbreviated(req, map[int][]string{0: {"GHSA-page2"}})
+		},
+		detail: func(id string) (osvVuln, bool) { return osvVuln{ID: id, Summary: id}, true },
+	}
+	server := httptest.NewServer(osv.handler(t))
+	defer server.Close()
+
+	c := &OSVChecker{client: interceptClient(server)}
+	sigs, err := c.Check([]scanner.Package{
+		{Name: "requests", Version: "2.31.0", Ecosystem: "pip"},
+		{Name: "flask", Version: "3.0.0", Ecosystem: "pip"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(osv.batchReqs) != 2 {
+		t.Fatalf("expected a follow-up request for the paginated query, got %d", len(osv.batchReqs))
+	}
+
+	second := osv.batchReqs[1]
+	if len(second.Queries) != 1 {
+		t.Errorf("expected only the paginated query replayed, got %d", len(second.Queries))
+	}
+	if second.Queries[0].PageToken != "token-2" {
+		t.Errorf("expected the page token echoed back, got %q", second.Queries[0].PageToken)
+	}
+	if second.Queries[0].Package.Name != "requests" {
+		t.Errorf("expected the replay to target the original package, got %q", second.Queries[0].Package.Name)
+	}
+
+	owners := map[string]string{}
+	for _, s := range sigs {
+		owners[s.ID] = s.Package
+	}
+	if len(owners) != 3 {
+		t.Fatalf("expected findings from both pages, got %+v", owners)
+	}
+	if owners["GHSA-page2"] != "requests" {
+		t.Errorf("expected the second page attributed to requests, got %q", owners["GHSA-page2"])
+	}
+}
+
+// A server that never stops handing back tokens must not loop forever.
+func TestOSVCheckerBoundsPagination(t *testing.T) {
+	osv := &osvServer{
+		batch: func(call int, req osvBatchRequest) osvBatchResponse {
+			resp := abbreviated(req, map[int][]string{0: {fmt.Sprintf("GHSA-%d", call)}})
+			resp.Results[0].NextPageToken = "always-more"
+			return resp
+		},
+		detail: func(id string) (osvVuln, bool) { return osvVuln{ID: id}, true },
+	}
+	server := httptest.NewServer(osv.handler(t))
+	defer server.Close()
+
+	c := &OSVChecker{client: interceptClient(server)}
+	if _, err := c.Check([]scanner.Package{{Name: "requests", Version: "2.31.0", Ecosystem: "pip"}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(osv.batchReqs) != maxQueryPages {
+		t.Errorf("expected pagination capped at %d pages, got %d", maxQueryPages, len(osv.batchReqs))
 	}
 }
 

@@ -27,6 +27,9 @@ Priority areas (highest impact first):
 - Keep PRs small and focused. One feature or fix per PR.
 - Add tests for new signals and parsers. Use `testdata/` for fixture files.
 - Run `go vet ./...` and `go test ./... -count=1` before submitting.
+- If you touch the OSV integration, also run `make test-live`. Those tests are
+  behind the `osvlive` build tag so the default suite stays offline, and they
+  assert the response shapes that mocks cannot catch.
 - Don't add external Go dependencies without discussion.
 - Be honest in signal descriptions. Don't overclaim detection certainty. A heuristic that says "possible typosquat" is better than one that says "malicious package detected."
 

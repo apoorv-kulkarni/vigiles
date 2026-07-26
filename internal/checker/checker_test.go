@@ -353,11 +353,87 @@ func TestOSV_ClassifySeverityFromScore(t *testing.T) {
 	if got := classifySeverity(vuln); got != "critical" {
 		t.Errorf("classifySeverity with score 9.1 = %q, want critical", got)
 	}
+}
 
-	// A CVSS vector string is not a bare number, so it cannot be classified.
-	vector := osvVuln{Severity: []osvSeverity{{Score: "CVSS:3.1/AV:N/AC:L"}}}
-	if got := classifySeverity(vector); got != "unknown" {
-		t.Errorf("classifySeverity with a vector string = %q, want unknown", got)
+// Real OSV records carry CVSS vectors, never bare numbers, so the vector path
+// is the one that matters in production.
+func TestOSV_ClassifySeverityFromVector(t *testing.T) {
+	tests := []struct {
+		name   string
+		vector string
+		want   string
+	}{
+		{"critical", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "critical"},
+		{"medium", "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:H/I:H/A:N", "medium"},
+		{"low", "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:N/I:L/A:N", "low"},
+		{"v3.0 vectors score the same way", "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vuln := osvVuln{Severity: []osvSeverity{{Type: "CVSS_V3", Score: tt.vector}}}
+			if got := classifySeverity(vuln); got != tt.want {
+				t.Errorf("classifySeverity(%s) = %q, want %q", tt.vector, got, tt.want)
+			}
+		})
+	}
+}
+
+// CVSS v4-only advisories carry no v3 vector, so the GitHub qualitative rating
+// is what keeps them out of the "unknown" bucket.
+func TestOSV_ClassifySeverityFallsBackToDatabaseSpecific(t *testing.T) {
+	v4Only := osvVuln{
+		Severity:         []osvSeverity{{Type: "CVSS_V4", Score: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}},
+		DatabaseSpecific: osvDatabaseSpecific{Severity: "MODERATE"},
+	}
+	if got := classifySeverity(v4Only); got != "medium" {
+		t.Errorf("classifySeverity for a v4-only record = %q, want medium", got)
+	}
+
+	// A parseable v3 vector wins over the coarser qualitative rating.
+	both := osvVuln{
+		Severity:         []osvSeverity{{Score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}},
+		DatabaseSpecific: osvDatabaseSpecific{Severity: "LOW"},
+	}
+	if got := classifySeverity(both); got != "critical" {
+		t.Errorf("expected the CVSS vector to win over database_specific, got %q", got)
+	}
+}
+
+func TestNormalizeQualitativeSeverity(t *testing.T) {
+	tests := map[string]string{
+		"CRITICAL":   "critical",
+		"HIGH":       "high",
+		"Important":  "high",
+		"MODERATE":   "medium",
+		"medium":     "medium",
+		"LOW":        "low",
+		"negligible": "low",
+		"":           "",
+		"bogus":      "",
+	}
+	for in, want := range tests {
+		if got := normalizeQualitativeSeverity(in); got != want {
+			t.Errorf("normalizeQualitativeSeverity(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestOSV_SummaryFromVuln(t *testing.T) {
+	if got := summaryFromVuln(osvVuln{Summary: "short summary"}); got != "short summary" {
+		t.Errorf("expected the summary used verbatim, got %q", got)
+	}
+
+	// PYSEC and RUSTSEC records routinely omit summary and carry only details.
+	got := summaryFromVuln(osvVuln{Description: "First line.\nSecond line."})
+	if got != "First line." {
+		t.Errorf("expected the first line of details, got %q", got)
+	}
+
+	// Nothing at all means the detail lookup failed; name the ID rather than
+	// rendering a blank row.
+	got = summaryFromVuln(osvVuln{ID: "GHSA-abcd"})
+	if !strings.Contains(got, "GHSA-abcd") {
+		t.Errorf("expected the ID named when no description exists, got %q", got)
 	}
 }
 

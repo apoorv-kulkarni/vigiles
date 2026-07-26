@@ -24,6 +24,20 @@ func offlineClient() *http.Client {
 	return &http.Client{Transport: failingTransport{}}
 }
 
+// failPathTransport routes to a test server but fails requests whose path
+// carries failPrefix, so one endpoint can go down while another stays up.
+type failPathTransport struct {
+	base       string
+	failPrefix string
+}
+
+func (f *failPathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.Path, f.failPrefix) {
+		return nil, errors.New("simulated transport failure")
+	}
+	return (&redirectTransport{base: f.base}).RoundTrip(req)
+}
+
 // jsonHandler serves a fixed body for any request.
 func jsonHandler(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +82,64 @@ func TestOSVCheckerMalformedResponse(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "parsing OSV response") {
 		t.Errorf("expected a parse error, got: %v", err)
+	}
+}
+
+// The querybatch response really does look like this: IDs and nothing else.
+const abbreviatedBatchBody = `{"results":[{"vulns":[{"id":"GHSA-degraded","modified":"2026-01-01T00:00:00Z"}]}]}`
+
+// The detail endpoint can fail independently of querybatch. Either way the
+// finding must survive, because a CVE hidden by a follow-up request failing is
+// worse than a CVE reported without its summary.
+func TestOSVCheckerSurvivesDetailEndpointFailures(t *testing.T) {
+	batchOnly := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, abbreviatedBatchBody)
+	}
+
+	tests := []struct {
+		name   string
+		detail http.HandlerFunc
+		// unreachable fails the detail request at the transport instead of
+		// letting it reach the server.
+		unreachable bool
+	}{
+		{name: "detail transport failure", unreachable: true},
+		{name: "malformed detail record", detail: jsonHandler(http.StatusOK, "{not json")},
+		{name: "detail not found", detail: jsonHandler(http.StatusNotFound, `{}`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/v1/vulns/") {
+					if tt.unreachable {
+						t.Error("did not expect the detail request to reach the server")
+						return
+					}
+					tt.detail(w, r)
+					return
+				}
+				batchOnly(w, r)
+			}))
+
+			client := interceptClient(server)
+			if tt.unreachable {
+				client = &http.Client{Transport: &failPathTransport{base: server.URL, failPrefix: "/v1/vulns/"}}
+			}
+
+			c := &OSVChecker{client: client}
+			sigs, err := c.Check([]scanner.Package{{Name: "requests", Version: "2.31.0", Ecosystem: "pip"}})
+			if err != nil {
+				t.Fatalf("a detail failure should not fail the scan, got %v", err)
+			}
+			if len(sigs) != 1 || sigs[0].ID != "GHSA-degraded" {
+				t.Fatalf("expected the finding retained, got %+v", sigs)
+			}
+			if sigs[0].Severity != "unknown" {
+				t.Errorf("expected an honest unknown severity, got %q", sigs[0].Severity)
+			}
+		})
 	}
 }
 
