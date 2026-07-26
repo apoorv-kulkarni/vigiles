@@ -100,18 +100,51 @@ func TestCheckSuspiciousPersistenceFindsExfilArtifact(t *testing.T) {
 	}
 }
 
-// stubPython3 puts a python3 on PATH that reports sitePackages as the
-// site-packages location, mimicking `python3 -c "import site; ..."`.
-func stubPython3(t *testing.T, sitePackages string) {
+// isolatePythonLookup points interpreter discovery at controlled locations:
+// an empty PATH, no active virtualenv, and a working directory with no
+// project-local venv. Individual tests then add back what they want found.
+func isolatePythonLookup(t *testing.T) {
 	t.Helper()
 	requirePOSIX(t)
 
-	binDir := t.TempDir()
-	// PATH is reduced to binDir, so the script may only use shell builtins.
-	script := "#!/bin/sh\necho '" + sitePackages + "'\n"
-	if err := os.WriteFile(filepath.Join(binDir, "python3"), []byte(script), 0o755); err != nil {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("VIRTUAL_ENV", "")
+
+	// Vigiles resolves .venv/venv/env relative to the working directory.
+	prev, err := os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(prev) })
+}
+
+// stubPythonAt writes a python3 stand-in at path that prints dirs one per line,
+// mimicking the site-directory script Vigiles runs.
+func stubPythonAt(t *testing.T, path string, dirs ...string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// PATH is reduced to a temp dir, so the script may only use shell builtins.
+	script := "#!/bin/sh\n"
+	for _, dir := range dirs {
+		script += "echo '" + dir + "'\n"
+	}
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stubPython3 puts a python3 on PATH reporting dirs as its site directories.
+func stubPython3(t *testing.T, dirs ...string) {
+	t.Helper()
+	isolatePythonLookup(t)
+
+	binDir := t.TempDir()
+	stubPythonAt(t, filepath.Join(binDir, "python3"), dirs...)
 	t.Setenv("PATH", binDir)
 }
 
@@ -124,7 +157,7 @@ func TestCheckPthFilesDetectsExecutableImports(t *testing.T) {
 
 	stubPython3(t, site)
 
-	sigs := NewHeuristicChecker().checkPthFiles()
+	sigs := NewHeuristicChecker().checkPthFiles(true)
 	if len(sigs) != 1 {
 		t.Fatalf("expected only the malicious .pth to be flagged, got %d: %+v", len(sigs), sigs)
 	}
@@ -151,7 +184,7 @@ func TestCheckPthFilesCleanSitePackages(t *testing.T) {
 	stubPython3(t, site)
 
 	// "import os" alone carries no suspicious marker.
-	if sigs := NewHeuristicChecker().checkPthFiles(); len(sigs) != 0 {
+	if sigs := NewHeuristicChecker().checkPthFiles(true); len(sigs) != 0 {
 		t.Errorf("expected no signals for benign .pth files, got %+v", sigs)
 	}
 }
@@ -159,17 +192,137 @@ func TestCheckPthFilesCleanSitePackages(t *testing.T) {
 func TestCheckPthFilesMissingSitePackagesDir(t *testing.T) {
 	stubPython3(t, filepath.Join(t.TempDir(), "does-not-exist"))
 
-	if sigs := NewHeuristicChecker().checkPthFiles(); len(sigs) != 0 {
+	// The interpreter answered, so the check ran. A site directory that does
+	// not exist on disk is normal, not a skipped scan.
+	if sigs := NewHeuristicChecker().checkPthFiles(true); len(sigs) != 0 {
 		t.Errorf("expected no signals when site-packages is unreadable, got %+v", sigs)
 	}
 }
 
-func TestCheckPthFilesWithoutPython(t *testing.T) {
-	requirePOSIX(t)
-	t.Setenv("PATH", t.TempDir()) // no python3 available
+// site.getsitepackages() omits the per-user directory, so a .pth dropped in
+// ~/.local/lib/pythonX/site-packages used to be invisible.
+func TestCheckPthFilesScansUserSiteDirectory(t *testing.T) {
+	site := t.TempDir()
+	userSite := t.TempDir()
+	writeFileAt(t, filepath.Join(userSite, "evil.pth"), "import base64, socket\n")
 
-	if sigs := NewHeuristicChecker().checkPthFiles(); len(sigs) != 0 {
-		t.Errorf("expected no signals when python3 is missing, got %+v", sigs)
+	stubPython3(t, site, userSite)
+
+	sigs := NewHeuristicChecker().checkPthFiles(true)
+	if len(sigs) != 1 || sigs[0].ID != "VIGILES-MALICIOUS-PTH" {
+		t.Fatalf("expected the user site directory scanned, got %+v", sigs)
+	}
+	if !strings.Contains(sigs[0].Details, userSite) {
+		t.Errorf("expected the user site path in details, got %q", sigs[0].Details)
+	}
+}
+
+// The realistic miss: a developer runs vigiles from a shell where the project
+// venv was never activated, so python3 resolves to the system interpreter.
+func TestCheckPthFilesScansInactiveVirtualenv(t *testing.T) {
+	systemSite := t.TempDir()
+	stubPython3(t, systemSite)
+
+	venv := t.TempDir()
+	venvSite := filepath.Join(venv, "lib", "python3.12", "site-packages")
+	writeFileAt(t, filepath.Join(venvSite, "evil.pth"), "import os; os.system('curl http://x/y')\n")
+	stubPythonAt(t, filepath.Join(venv, "bin", "python3"), venvSite)
+	t.Setenv("VIRTUAL_ENV", venv)
+
+	sigs := NewHeuristicChecker().checkPthFiles(true)
+	if len(sigs) != 1 || sigs[0].ID != "VIGILES-MALICIOUS-PTH" {
+		t.Fatalf("expected the venv scanned even though python3 resolves elsewhere, got %+v", sigs)
+	}
+	if !strings.Contains(sigs[0].Details, venvSite) {
+		t.Errorf("expected the venv site path in details, got %q", sigs[0].Details)
+	}
+}
+
+// A project-local .venv is found without VIRTUAL_ENV being set at all.
+func TestCheckPthFilesScansProjectLocalVenv(t *testing.T) {
+	isolatePythonLookup(t)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	venvSite := filepath.Join(cwd, ".venv", "lib", "python3.12", "site-packages")
+	writeFileAt(t, filepath.Join(venvSite, "evil.pth"), "import subprocess\n")
+	stubPythonAt(t, filepath.Join(cwd, ".venv", "bin", "python3"), venvSite)
+
+	sigs := NewHeuristicChecker().checkPthFiles(true)
+	if len(sigs) != 1 || sigs[0].ID != "VIGILES-MALICIOUS-PTH" {
+		t.Fatalf("expected .venv discovered relative to the working directory, got %+v", sigs)
+	}
+}
+
+// A silent all-clear is the worst outcome for the headline check, so an
+// unrunnable scan is reported rather than skipped.
+func TestCheckPthFilesReportsSkipWhenPythonUnavailable(t *testing.T) {
+	isolatePythonLookup(t)
+
+	sigs := NewHeuristicChecker().checkPthFiles(true)
+	if len(sigs) != 1 || sigs[0].ID != "VIGILES-PTH-SCAN-SKIPPED" {
+		t.Fatalf("expected the skip reported when no interpreter is available, got %+v", sigs)
+	}
+	if sigs[0].Type != "system-heuristic" || sigs[0].Severity != "unknown" {
+		t.Errorf("expected an unknown-severity system-heuristic, got %+v", sigs[0])
+	}
+}
+
+// A broken interpreter must not mask a working one.
+func TestCheckPthFilesSkipsFailingInterpreter(t *testing.T) {
+	site := t.TempDir()
+	writeFileAt(t, filepath.Join(site, "evil.pth"), "import os; os.system('curl http://x/y')\n")
+	stubPython3(t, site)
+
+	venv := t.TempDir()
+	broken := filepath.Join(venv, "bin", "python3")
+	if err := os.MkdirAll(filepath.Dir(broken), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VIRTUAL_ENV", venv)
+
+	sigs := NewHeuristicChecker().checkPthFiles(true)
+	if len(sigs) != 1 || sigs[0].ID != "VIGILES-MALICIOUS-PTH" {
+		t.Fatalf("expected the working interpreter still scanned, got %+v", sigs)
+	}
+}
+
+func TestPythonInterpretersSkipsDirectories(t *testing.T) {
+	isolatePythonLookup(t)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, ".venv", "bin", "python3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := pythonInterpreters(); len(got) != 0 {
+		t.Errorf("expected a directory named python3 to be skipped, got %v", got)
+	}
+}
+
+// A pure npm project on a host without Python should not be nagged about it.
+func TestCheckPthFilesSilentWhenNoPythonPackages(t *testing.T) {
+	isolatePythonLookup(t)
+
+	if sigs := NewHeuristicChecker().checkPthFiles(false); len(sigs) != 0 {
+		t.Errorf("expected silence when no Python packages were inventoried, got %+v", sigs)
+	}
+}
+
+func TestHasPipPackages(t *testing.T) {
+	if hasPipPackages([]scanner.Package{{Ecosystem: "npm"}, {Ecosystem: "brew"}}) {
+		t.Error("expected false without pip packages")
+	}
+	if !hasPipPackages([]scanner.Package{{Ecosystem: "npm"}, {Ecosystem: "pip"}}) {
+		t.Error("expected true when a pip package is present")
 	}
 }
 

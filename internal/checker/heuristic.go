@@ -25,10 +25,19 @@ func (c *HeuristicChecker) Check(packages []scanner.Package) []signal.Signal {
 
 	// System-level checks — labeled as system-heuristic, not attributed
 	// to any single package.
-	signals = append(signals, c.checkPthFiles()...)
+	signals = append(signals, c.checkPthFiles(hasPipPackages(packages))...)
 	signals = append(signals, c.checkSuspiciousPersistence()...)
 
 	return signals
+}
+
+func hasPipPackages(packages []scanner.Package) bool {
+	for _, pkg := range packages {
+		if pkg.Ecosystem == "pip" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *HeuristicChecker) checkPackage(pkg scanner.Package) []signal.Signal {
@@ -81,20 +90,100 @@ func checkNpmHeuristics(pkg scanner.Package) []signal.Signal {
 	return signals
 }
 
-// checkPthFiles scans Python site-packages for .pth files with executable
+// pythonSiteScript prints every site directory the interpreter imports from,
+// including the per-user directory that site.getsitepackages() omits.
+const pythonSiteScript = `import site
+dirs = list(site.getsitepackages())
+try:
+    dirs.append(site.getusersitepackages())
+except Exception:
+    pass
+print("\n".join(d for d in dirs if d))`
+
+// pythonInterpreters returns the interpreters whose site directories should be
+// scanned, most specific first. Resolving only python3 from PATH misses a
+// project virtualenv that isn't activated in the calling shell, which is
+// exactly where a compromised package would sit.
+func pythonInterpreters() []string {
+	var candidates []string
+	if venv := os.Getenv("VIRTUAL_ENV"); venv != "" {
+		candidates = append(candidates, filepath.Join(venv, "bin", "python3"))
+	}
+	for _, dir := range []string{".venv", "venv", "env"} {
+		candidates = append(candidates, filepath.Join(dir, "bin", "python3"))
+	}
+	if path, err := exec.LookPath("python3"); err == nil {
+		candidates = append(candidates, path)
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range candidates {
+		// Absolute, not symlink-resolved: a venv's python3 usually links to the
+		// base interpreter, and following that link would discard the venv's
+		// own site directories.
+		resolved, err := filepath.Abs(candidate)
+		if err != nil || seen[resolved] {
+			continue
+		}
+		if info, err := os.Stat(resolved); err != nil || info.IsDir() {
+			continue
+		}
+		seen[resolved] = true
+		out = append(out, resolved)
+	}
+	return out
+}
+
+// pythonSiteDirs returns the deduplicated site directories across every
+// resolvable interpreter, and whether any interpreter answered at all.
+func pythonSiteDirs() (dirs []string, queried bool) {
+	seen := map[string]bool{}
+	for _, python := range pythonInterpreters() {
+		out, err := exec.Command(python, "-c", pythonSiteScript).Output()
+		if err != nil {
+			continue
+		}
+		queried = true
+		for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if dir = strings.TrimSpace(dir); dir == "" || seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs, queried
+}
+
+// checkPthFiles scans Python site directories for .pth files with executable
 // import statements — the technique used in LiteLLM 1.82.8.
 // Labeled as system-heuristic since findings aren't tied to a pip-installed
 // package name.
-func (c *HeuristicChecker) checkPthFiles() []signal.Signal {
+//
+// pipInScope reports whether the scan inventoried any Python packages. When it
+// did and no interpreter can be queried, the check reports that it did not run:
+// returning a silent all-clear would hide Vigiles' headline detection.
+func (c *HeuristicChecker) checkPthFiles(pipInScope bool) []signal.Signal {
 	var signals []signal.Signal
 
-	out, err := exec.Command("python3", "-c",
-		"import site; print('\\n'.join(site.getsitepackages()))").Output()
-	if err != nil {
-		return signals
+	dirs, queried := pythonSiteDirs()
+	if !queried {
+		if !pipInScope {
+			return nil
+		}
+		return []signal.Signal{{
+			Package: "system", Version: "", Ecosystem: "system",
+			Type: "system-heuristic", Severity: "unknown",
+			ID:      "VIGILES-PTH-SCAN-SKIPPED",
+			Summary: "Could not scan for malicious .pth files: no usable Python interpreter",
+			Details: "Python packages were inventoried but no interpreter answered a site " +
+				"directory query, so the .pth persistence check never ran. Put python3 on " +
+				"PATH, or run Vigiles with the project's virtualenv active.",
+		}}
 	}
 
-	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
