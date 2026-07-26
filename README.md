@@ -293,8 +293,11 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 Vigiles provides **informational signals**, not security guarantees.
 
 - **CVE coverage depends on OSV.** The OSV database is comprehensive but not instantaneous — newly disclosed vulnerabilities may take hours to days to appear.
+- **CVE lookups take two round trips.** OSV's `/v1/querybatch` returns only advisory IDs, so Vigiles fetches each distinct advisory from `/v1/vulns/{id}` to get its summary, severity, aliases, and fixed versions. Lookups are deduplicated across packages and run concurrently. If a detail fetch fails the finding is still reported, with `unknown` severity.
+- **Severity is derived, not always published.** Vigiles scores the CVSS v3.x vector when one is present and otherwise uses the advisory's own qualitative rating. CVSS v4-only advisories without a qualitative rating fall back to `unknown` rather than being guessed at.
 - **Homebrew packages are not checked for CVEs.** No OSV ecosystem mapping exists for Homebrew. Vigiles inventories brew packages but cannot check them for known vulnerabilities.
 - **Heuristic checks use pattern matching.** Typosquatting detection (edit distance), `.pth` file scanning, and persistence detection can produce false positives and will miss novel techniques.
+- **`.pth` scanning follows the interpreters it can find.** Vigiles checks the active virtualenv, a project-local `.venv`/`venv`/`env`, and `python3` on `PATH`, covering both the shared and per-user site directories of each. A virtualenv in some other location is not scanned. If Python packages were inventoried but no interpreter could be queried, Vigiles emits `VIGILES-PTH-SCAN-SKIPPED` rather than reporting a clean result.
 - **Trust signals are informational, not conclusive.** A recently published version is not inherently malicious. An npm install script is not inherently dangerous. These signals provide context for human judgment.
 - **Diff npm checks may call npm registry.** For npm packages pinned to exact versions, Vigiles queries package metadata to inspect lifecycle scripts: one request for a newly added package, and two for an update (the old and the new version). Metadata is not cached across packages.
 - **Recency checks make live PyPI API calls.** One HTTP request per pip package (cached per scan). Use `--skip-recency` if this is too slow or you're offline.
@@ -303,7 +306,8 @@ Vigiles provides **informational signals**, not security guarantees.
 ## Design principles
 
 - **Zero external Go dependencies** — stdlib only, single static binary
-- **Honest about limitations** — severity falls back to "unknown" when CVSS data isn't available, Homebrew is skipped from CVE checks, signals are clearly typed
+- **Honest about limitations** — severity falls back to "unknown" when no CVSS vector or qualitative rating is available, Homebrew is skipped from CVE checks, signals are clearly typed
+- **Checks that can't run say so** — a security check that silently skips is worse than one that fails loudly
 - **CI-friendly** — proper exit codes, clean JSON to stdout, progress to stderr
 - **Offline capable** — `--skip-vuln --skip-recency` runs all heuristic checks with no network
 - **Deduplication** — packages and signals are deduplicated across sources (e.g., npm local+global overlap)
@@ -339,6 +343,11 @@ actually land over breadth across new ecosystems.
 
 Deferred, with reasons:
 
+- **CVSS v4.0 base-score calculator**: v4 scoring needs a 270-entry MacroVector
+  lookup table plus interpolation. Across a 268-advisory sample only 19 carried
+  v4 without v3, and 18 of those already published a qualitative rating that
+  Vigiles now uses, so the table would change essentially no verdicts today.
+  Revisit when v4-only advisories without a qualitative rating become common.
 - **Baseline command** (`vigiles baseline create` / `vigiles baseline diff`): the
   stateful diff above needs no persisted state, so a state file, schema, and
   staleness handling buy little right now.
