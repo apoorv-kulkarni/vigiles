@@ -134,6 +134,7 @@ Supported:
 - requirements.txt
 - package.json
 - package-lock.json
+- pnpm-lock.yaml
 - uv.lock
 
 ```bash
@@ -146,6 +147,16 @@ PyPI registry, including marker-specific cases where one package has multiple
 locked versions. Editable and virtual workspace packages are treated as local
 project code. Alternate registries and other package source types are rejected
 rather than silently treated as covered.
+
+For `pnpm-lock.yaml`, Vigiles supports current lockfile version 9.0 package
+entries with exact semver identities and integrity-backed registry resolution.
+Peer-context suffixes are collapsed for package identity while distinct locked
+versions remain distinct. Explicit tarball, Git, directory, binary, and custom
+sources are rejected. Lockfiles using `patchedDependencies` or pnpmfile hooks
+are also rejected because they can change installed code or package behavior
+without a package-version change. When pnpm omits a registry URL, the lockfile
+alone does not prove which registry supplied the artifact; registry provenance
+therefore remains outside this comparison.
 
 Example:
 
