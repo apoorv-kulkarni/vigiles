@@ -67,9 +67,10 @@ startup baseline's policy and suppressions determine the verdict.
 
 Supported formats and strict parsing rules are the same as the
 [dependency gate](enforcement.md): npm `package.json` and `package-lock.json`,
-pip `requirements.txt`, `requirements-*.txt`, `requirements_*.txt`, and
-`constraints.txt`. Changed recognized unsupported manifests produce `incomplete`,
-including `uv.lock`, `go.mod`, and MCP configuration files. The MCP transport does
+pip `requirements.txt`, `requirements-*.txt`, `requirements_*.txt`,
+`constraints.txt`, and supported public-PyPI entries in `uv.lock`. Changed
+recognized unsupported manifests produce `incomplete`, including `go.mod` and
+MCP configuration files. The MCP transport does
 not add a parser or security audit for MCP configuration or other servers.
 
 Only the top-level `.git` metadata entry is skipped. There are deliberately no

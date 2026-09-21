@@ -78,12 +78,12 @@ func TestWorktreeDiscoversIgnoredUntrackedAndDeletedInputs(t *testing.T) {
 	w := openWorktree(t, repo, base)
 	writeWorktree(t, repo, ".gitignore", "hidden/\n")
 	writeWorktree(t, repo, "hidden/requirements.txt", "-r secret.txt\n")
-	writeWorktree(t, repo, "new/uv.lock", "version = 1\n")
+	writeWorktree(t, repo, "new/uv.lock", "version = 1\nrevision = 3\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n")
 	r := w.Check(context.Background())
-	if Decide(r, "test", io.Discard) != 2 || len(r.Inputs) != 2 || len(r.Incomplete) < 2 {
+	if Decide(r, "test", io.Discard) != 2 || len(r.Inputs) != 3 || len(r.Incomplete) < 1 {
 		t.Fatalf("missed worktree inputs: %+v", r)
 	}
-	if r.Inputs[0].Path != "hidden/requirements.txt" || r.Inputs[1].Path != "old/requirements.txt" {
+	if r.Inputs[0].Path != "hidden/requirements.txt" || r.Inputs[1].Path != "new/uv.lock" || r.Inputs[2].Path != "old/requirements.txt" {
 		t.Fatalf("wrong paths: %+v", r.Inputs)
 	}
 }

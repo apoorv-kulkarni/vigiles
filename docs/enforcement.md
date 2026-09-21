@@ -50,10 +50,14 @@ ignores Git replacement objects, rejects symlink manifests and submodules, and
 limits individual Git command output to 8 MiB. Both commits must already be
 available locally; unavailable objects fail the gate.
 
-Recognized names are `package.json`, `package-lock.json`, `requirements.txt`,
-`requirements-*.txt`, `requirements_*.txt`, and `constraints.txt`, at any depth.
-There are no implicit vendor-directory exclusions. Changes to recognized
-unsupported manifests (for example `uv.lock`, `pyproject.toml`, `pnpm-lock.yaml`,
+Recognized names are `package.json`, `package-lock.json`, `uv.lock`,
+`requirements.txt`, `requirements-*.txt`, `requirements_*.txt`, and
+`constraints.txt`, at any depth. There are no implicit vendor-directory
+exclusions. For `uv.lock`, schema version 1 packages from the public PyPI
+registry are covered, including multiple marker-specific versions of a package.
+Editable and virtual workspace packages are local project code; alternate
+registries and other package source types make the comparison incomplete.
+Changes to recognized unsupported manifests (for example `pyproject.toml`, `pnpm-lock.yaml`,
 `go.mod`, or `.mcp.json`) produce an incomplete verdict. No supported manifests
 also produces an incomplete verdict. This is not discovery of every possible
 dependency source: custom filenames, generated inputs and installation commands

@@ -177,8 +177,9 @@ func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recen
 	var entries []Entry
 
 	// Check for added and updated
-	for name, newVer := range newDeps {
-		oldVer, existed := oldDeps[name]
+	for key, newVer := range newDeps {
+		name := dependencyDisplayName(key)
+		oldVer, existed := oldDeps[key]
 		if !existed {
 			e := Entry{
 				Name: name, Ecosystem: ecosystem,
@@ -197,10 +198,10 @@ func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recen
 	}
 
 	// Check for removed
-	for name, oldVer := range oldDeps {
-		if _, exists := newDeps[name]; !exists {
+	for key, oldVer := range oldDeps {
+		if _, exists := newDeps[key]; !exists {
 			entries = append(entries, Entry{
-				Name: name, Ecosystem: ecosystem,
+				Name: dependencyDisplayName(key), Ecosystem: ecosystem,
 				Status: Removed, OldVersion: oldVer,
 			})
 		}
@@ -210,7 +211,13 @@ func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recen
 		if entries[i].Status != entries[j].Status {
 			return statusOrder(entries[i].Status) < statusOrder(entries[j].Status)
 		}
-		return entries[i].Name < entries[j].Name
+		if entries[i].Name != entries[j].Name {
+			return entries[i].Name < entries[j].Name
+		}
+		if entries[i].NewVersion != entries[j].NewVersion {
+			return entries[i].NewVersion < entries[j].NewVersion
+		}
+		return entries[i].OldVersion < entries[j].OldVersion
 	})
 
 	return entries
@@ -618,6 +625,9 @@ func parseData(path string, data []byte) (map[string]string, string, error) {
 	case base == "package.json" || base == "package-lock.json":
 		deps, err := parsePackageJSON(data)
 		return deps, "npm", err
+	case base == "uv.lock":
+		deps, err := parseUVLock(data)
+		return deps, "pip", err
 	case base == "requirements.txt" || base == "constraints.txt" ||
 		(strings.HasSuffix(base, ".txt") && (strings.HasPrefix(base, "requirements-") || strings.HasPrefix(base, "requirements_"))):
 		deps := parseRequirementsTxt(string(data))
