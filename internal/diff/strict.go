@@ -114,7 +114,7 @@ var requirementNameSeparators = regexp.MustCompile(`[-_.]+`)
 func parseStrict(name string, data []byte) (map[string]string, string, error) {
 	base := strings.ToLower(filepath.Base(name))
 	eco := "pip"
-	if base == "package.json" || base == "package-lock.json" {
+	if base == "package.json" || base == "package-lock.json" || base == "pnpm-lock.yaml" {
 		eco = "npm"
 	}
 	if data == nil {
@@ -122,6 +122,10 @@ func parseStrict(name string, data []byte) (map[string]string, string, error) {
 	}
 	if base == "uv.lock" {
 		deps, err := parseUVLock(data)
+		return deps, eco, err
+	}
+	if base == "pnpm-lock.yaml" {
+		deps, err := parsePNPMLock(data)
 		return deps, eco, err
 	}
 	if eco == "npm" {
