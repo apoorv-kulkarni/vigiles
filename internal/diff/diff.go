@@ -628,6 +628,9 @@ func parseData(path string, data []byte) (map[string]string, string, error) {
 	case base == "uv.lock":
 		deps, err := parseUVLock(data)
 		return deps, "pip", err
+	case base == "pnpm-lock.yaml":
+		deps, err := parsePNPMLock(data)
+		return deps, "npm", err
 	case base == "requirements.txt" || base == "constraints.txt" ||
 		(strings.HasSuffix(base, ".txt") && (strings.HasPrefix(base, "requirements-") || strings.HasPrefix(base, "requirements_"))):
 		deps := parseRequirementsTxt(string(data))
