@@ -98,6 +98,26 @@ func TestPNPMLockDiffPreservesMultipleVersions(t *testing.T) {
 	}
 }
 
+func TestPNPMLockArtifactIntegrityChangeWithoutVersionChange(t *testing.T) {
+	oldDeps, err := parsePNPMLock([]byte(pnpmLockFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLock := strings.Replace(pnpmLockFixture, "sha512-react}", "sha512-react-new}", 1)
+	newDeps, err := parsePNPMLock([]byte(newLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries := computeDiffWith(oldDeps, newDeps, "npm", noopRecencyChecker{}, noopNpmRiskChecker{})
+	if len(entries) != 1 || entries[0].Status != Updated || entries[0].Name != "react" {
+		t.Fatalf("artifact integrity change was missed: %#v", entries)
+	}
+	if len(entries[0].Signals) != 1 || entries[0].Signals[0].ID != "VIGILES-NPM-ARTIFACT-CHANGE" {
+		t.Fatalf("wrong artifact signal: %#v", entries[0].Signals)
+	}
+}
+
 func TestParsePNPMLockRejectsUnsupportedCoverage(t *testing.T) {
 	for _, tc := range []struct {
 		name string
