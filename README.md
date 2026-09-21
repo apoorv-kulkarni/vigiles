@@ -8,25 +8,54 @@ A single binary that scans your installed packages across **pip, npm, Homebrew, 
 
 ## Quickstart
 
+The [v0.4.0-rc.1 release candidate](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.1)
+adds strict checks for local agents, a pull-request gate, and a reusable GitHub
+Action. Install the prerelease explicitly; `@latest` continues to select the
+latest stable release.
+
 ```bash
-# Install
-go install github.com/apoorv-kulkarni/vigiles@latest
+# Install the release candidate with Go
+go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.1
+vigiles version
 
-# Or build from source
-git clone https://github.com/apoorv-kulkarni/vigiles.git
-cd vigiles
-go build -o vigiles .
+# Scan installed dependencies
+vigiles scan
 
-# Scan everything
-./vigiles scan
-
-# Compare dependency files
-./vigiles diff requirements-old.txt requirements-new.txt
+# Compare dependency files, blocking incomplete checks
+vigiles diff --strict old/requirements.txt new/requirements.txt
 ```
 
-Release builds include Linux AMD64 and macOS Intel/Apple Silicon binaries, each
-with SLSA provenance. See [release artifacts and version reporting](docs/releases.md)
-for filenames and validation coverage.
+### Download a binary
+
+No Go installation is needed for these release binaries:
+
+| Platform | Download |
+| --- | --- |
+| Linux AMD64 | [vigiles](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles) |
+| macOS Intel | [vigiles-darwin-amd64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles-darwin-amd64) |
+| macOS Apple Silicon | [vigiles-darwin-arm64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles-darwin-arm64) |
+
+Each binary has a matching `.intoto.jsonl` provenance file on the release page.
+See [release verification](docs/releases.md#verify-a-download) before running a download.
+For example, after verifying the Apple Silicon binary:
+
+```bash
+chmod +x vigiles-darwin-arm64
+./vigiles-darwin-arm64 version
+./vigiles-darwin-arm64 scan
+```
+
+The macOS binaries are not Apple-signed or notarized.
+
+### Build from source
+
+```bash
+git clone https://github.com/apoorv-kulkarni/vigiles.git
+cd vigiles
+git checkout v0.4.0-rc.1
+go build -o vigiles .
+./vigiles scan
+```
 
 ## Why this exists
 
@@ -167,6 +196,25 @@ Only `preinstall`, `install`, and `postinstall` are compared. `prepare` is
 excluded because it does not run for consumers installing from the registry, so
 changes to it are noise in a dependency diff.
 
+### `vigiles gate`
+
+Audits dependency changes between two committed Git trees and emits JSON. The
+trusted caller supplies full, distinct commit IDs that are available locally:
+
+```bash
+vigiles gate --base "$BASE_SHA" --head "$HEAD_SHA" > gate-report.json
+```
+
+The gate discovers supported manifests in both trees and reads `.vigiles.yaml`
+from the base commit. A PR cannot make its own findings pass by adding a new
+suppression or relaxing policy in its head commit. Reports bind the verdict to
+the base/head commits, policy hash, and inspected manifest contents.
+
+This checks dependency changes, including npm lifecycle/publisher changes and
+strict parsing coverage. It does not perform a CVE scan or sandbox an agent.
+Unsupported inputs and unavailable required metadata produce `incomplete` and
+exit 2. See [supported scope and restrictions](docs/enforcement.md#policy-and-input-selection).
+
 ## Project configuration (.vigiles.yaml)
 
 Place a `.vigiles.yaml` file in your project root to set persistent policy and suppress known-safe signals without touching CI flags.
@@ -197,7 +245,10 @@ suppress:
 | `reason` | no | Human-readable justification (recommended) |
 | `expires` | no | `YYYY-MM-DD` date after which the suppression no longer applies |
 
-Expired suppressions emit a warning on stderr and are not applied. The `--fail-on` CLI flag always takes precedence over `policy.fail-on` in the config file.
+Expired suppressions emit a warning on stderr and are not applied. For `scan`
+and `diff`, `--fail-on` takes precedence over `policy.fail-on`. The `gate`
+command uses base-commit policy and has no `--fail-on` or suppression override.
+Suppressions never turn incomplete strict checks into a passing result.
 
 ## Signal types
 
@@ -214,26 +265,63 @@ Vigiles clearly distinguishes what it finds:
 
 | Code | Meaning |
 | ---- | ------- |
-| `0` | Scan/diff completed, no findings matching `--fail-on` policy |
-| `1` | Scan/diff completed, findings matching `--fail-on` policy exist |
-| `2` | Runtime or usage error |
+| `0` | No findings matching the effective policy; gate verdict `pass` |
+| `1` | Findings match the effective policy; gate verdict `blocked` |
+| `2` | Runtime/usage error, or incomplete coverage in `gate` and strict mode |
 
-This makes Vigiles usable as a CI gate.
+Use `--strict` with `scan` or `diff` when known coverage gaps must block CI.
+Without strict mode, inspect the report's `status` and `incomplete` fields as well
+as the exit code. `gate` always blocks incomplete coverage.
 
 ## GitHub Actions
 
-For agent-generated PRs, the repository now includes a composite Action and
-`vigiles gate --base <full-sha> --head <full-sha>`. The gate reads policy from
-the base commit, discovers manifests in both Git trees, and blocks incomplete
-dependency comparisons. See [Enforcement for agents and CI](docs/enforcement.md)
-for the pinned workflow template, supported scope, parser restrictions, and
-required repository protections. The Action must be committed and published
-before other repositories can reference it.
+### Require a dependency gate for pull requests
+
+Add `.github/workflows/vigiles.yml` to a consuming repository. This pins the
+Action to the reviewed commit behind `v0.4.0-rc.1`:
+
+```yaml
+name: Dependency gate
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  vigiles:
+    name: Vigiles dependency gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gate dependency changes
+        id: vigiles
+        uses: apoorv-kulkarni/vigiles@8ad8c10c46d89c999f5f6b71898dc12a88d078a5 # v0.4.0-rc.1
+```
+
+The Action supports Linux runners and `pull_request` events. It builds its own
+pinned source and reads the PR's commit IDs from the event. `outputs.verdict`
+contains `pass`, `blocked`, or `incomplete`; `outputs.report` points to the JSON
+report on the runner, including failed gate runs.
+
+Make **Vigiles dependency gate** a required check and protect the workflow and
+base policy with maintainer review. Keep the job free of PR-controlled scripts,
+conditional skips, and `continue-on-error`. Installing an Action alone cannot
+prevent an agent with permission to change those controls from bypassing them.
+See [Enforcement for agents and CI](docs/enforcement.md) for the full policy model
+and parser restrictions. No Marketplace listing is required to use this Action.
+
+### Local agent checks
 
 Local callers can use `vigiles diff --strict --format json old/requirements.txt
 new/requirements.txt` or `vigiles scan --strict`. Strict mode returns exit 2 for
 known missing coverage, independently of finding suppressions or `--fail-on none`.
 Normal scan output now reports known coverage failures as `status: incomplete`.
+
+The external launcher must enforce the exit code and keep the executable and
+policy outside the agent's writable environment. An agent's voluntary invocation
+of Vigiles is not an enforcement boundary. MCP and runtime hooks are not included
+in this release candidate.
 
 ### Block on CVEs, surface everything else as annotations
 
@@ -243,7 +331,7 @@ GitHub Security tab without blocking the build.
 
 ```yaml
 - name: Install vigiles
-  run: go install github.com/apoorv-kulkarni/vigiles@latest
+  run: go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.1
 
 - name: Scan dependencies
   run: vigiles scan --fail-on vulnerability --format sarif --output vigiles.sarif
@@ -266,8 +354,11 @@ GitHub Security tab without blocking the build.
 
 ```yaml
 - name: Check dependency changes
-  run: vigiles diff --fail-on vulnerability,heuristic requirements-baseline.txt requirements.txt
+  run: vigiles diff --strict --fail-on heuristic requirements-baseline.txt requirements.txt
 ```
+
+This local-file example checks dependency changes, not CVEs. Use the composite
+Action above when policy must come from the trusted base commit.
 
 ### Reporting only (never blocks CI)
 
@@ -288,7 +379,8 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "0.3.6",
+  "version": "v0.4.0-rc.1",
+  "status": "complete",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
   "ecosystems": ["pip", "npm"],
@@ -345,6 +437,10 @@ Vigiles provides **informational signals**, not security guarantees.
 - [x] Watch mode with desktop notifications
 - [x] `--fail-on` CI policy flag (per signal type)
 - [x] `.vigiles.yaml` project config (persistent policy + suppressions with expiry)
+- [x] Strict scan/diff modes that block known coverage gaps
+- [x] Immutable dependency gate with policy from the base commit
+- [x] Composite GitHub Action for agent-generated pull requests
+- [x] Linux AMD64 and macOS Intel/Apple Silicon releases with SLSA provenance
 
 ### v0.4 — signal quality and stateful detection
 

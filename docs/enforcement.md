@@ -82,8 +82,7 @@ integrity emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
 
 Use a fresh Linux runner in a dedicated job. This initial Action supports only
 `pull_request` events; merge queues and other events are not yet supported.
-Replace the placeholder below with a reviewed full commit SHA after the Action
-is committed and available remotely:
+The example pins the reviewed commit behind `v0.4.0-rc.1`:
 
 ```yaml
 name: Dependency gate
@@ -101,7 +100,7 @@ jobs:
           persist-credentials: false
       - name: Gate dependency changes
         id: vigiles
-        uses: apoorv-kulkarni/vigiles@<REVIEWED_FULL_COMMIT_SHA>
+        uses: apoorv-kulkarni/vigiles@8ad8c10c46d89c999f5f6b71898dc12a88d078a5 # v0.4.0-rc.1
 ```
 
 The Action obtains the expected commits from the PR event, builds its own pinned

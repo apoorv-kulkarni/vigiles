@@ -1,6 +1,7 @@
 # Release artifacts
 
-Starting with the next release after v0.3.8, the release workflow builds:
+The [v0.4.0-rc.1 prerelease](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.1)
+provides these artifacts:
 
 | Platform | Binary | Provenance |
 | --- | --- | --- |
@@ -16,6 +17,23 @@ Download the binary for your machine from the
 [release page](https://github.com/apoorv-kulkarni/vigiles/releases), make it
 executable with `chmod +x <binary>`, and run `<path-to-binary> version`.
 The macOS binaries are not Apple-signed or notarized.
+
+## Verify a download
+
+Download the binary and its matching `.intoto.jsonl` file from the same release.
+With [slsa-verifier](https://github.com/slsa-framework/slsa-verifier#installation)
+installed, verify the artifact digest, signature, source repository and release tag:
+
+```bash
+# Apple Silicon example; substitute the matching filenames for another platform.
+slsa-verifier verify-artifact vigiles-darwin-arm64 \
+  --provenance-path vigiles-darwin-arm64.intoto.jsonl \
+  --source-uri github.com/apoorv-kulkarni/vigiles \
+  --source-tag v0.4.0-rc.1
+```
+
+Only execute the downloaded binary after verification succeeds. This verifies
+its build origin and integrity, not the safety of dependencies it later scans.
 
 ## Version reporting
 
