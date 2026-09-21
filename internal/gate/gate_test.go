@@ -97,7 +97,7 @@ func TestGateRejectsMissingCoverage(t *testing.T) {
 	}{
 		{"includes", map[string]string{"requirements.txt": "-r hidden.txt\n", "hidden.txt": "requests==2.32.0\n"}, ""},
 		{"symlink", map[string]string{"requirements.txt": "hidden.txt"}, "requirements.txt"},
-		{"unsupported", map[string]string{"requirements.txt": "", "uv.lock": "version = 1"}, ""},
+		{"unsupported", map[string]string{"requirements.txt": "", "go.mod": "module example.test/demo\n"}, ""},
 		{"ambiguous json", map[string]string{"package.json": `{"dependencies":{},"dependencies":{}}`}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,6 +112,32 @@ func TestGateRejectsMissingCoverage(t *testing.T) {
 				t.Fatalf("coverage gap passed: %+v", r)
 			}
 		})
+	}
+}
+
+func TestGateSupportsUVLock(t *testing.T) {
+	repo := fixtureRepo(t)
+	lock := `version = 1
+revision = 3
+
+[[package]]
+name = "demo"
+version = "0.1.0"
+source = { editable = "." }
+
+[[package]]
+name = "requests"
+version = "2.32.0"
+source = { registry = "https://pypi.org/simple" }
+`
+	base := snapshot(t, repo, "", map[string]string{"uv.lock": lock}, "")
+	head := snapshot(t, repo, base, map[string]string{"uv.lock": lock, "README.md": "changed"}, "")
+	r, err := Run(repo, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "complete" || len(r.Inputs) != 1 || r.Inputs[0].Path != "uv.lock" {
+		t.Fatalf("uv.lock was not covered: %+v", r)
 	}
 }
 
