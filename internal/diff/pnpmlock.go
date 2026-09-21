@@ -59,7 +59,7 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
 		if indent == 0 {
 			switch {
-			case trimmed == "patchedDependencies:":
+			case strings.HasPrefix(trimmed, "patchedDependencies:"):
 				return nil, fmt.Errorf("pnpm-lock.yaml patchedDependencies are not covered")
 			case strings.HasPrefix(trimmed, "pnpmfileChecksum:"):
 				return nil, fmt.Errorf("pnpm-lock.yaml pnpmfile hooks are not covered")
@@ -76,7 +76,10 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 				}
 				seenVersion = true
 			}
-			if trimmed == "packages:" {
+			if strings.HasPrefix(trimmed, "packages:") {
+				if trimmed != "packages:" {
+					return nil, fmt.Errorf("pnpm-lock.yaml inline packages maps are not covered")
+				}
 				if err := flush(); err != nil {
 					return nil, err
 				}
@@ -96,7 +99,10 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 			continue
 		}
 
-		if indent == 2 && strings.HasSuffix(trimmed, ":") {
+		if indent == 2 {
+			if !strings.HasSuffix(trimmed, ":") {
+				return nil, fmt.Errorf("pnpm-lock.yaml line %d uses an unsupported package entry", i+1)
+			}
 			if err := flush(); err != nil {
 				return nil, err
 			}
