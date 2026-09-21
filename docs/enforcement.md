@@ -88,8 +88,8 @@ Strict parsing deliberately refuses syntax it cannot faithfully compare:
 
 These restrictions can block legitimate projects. Expand parser coverage with
 fixtures rather than suppressing incomplete checks. Unchanged dependencies are
-not fetched again. Same-version changes to npm lockfile artifact locations or
-integrity emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
+not fetched again. Same-version changes to npm package-lock artifact locations or integrity, and
+pnpm lockfile integrity changes, emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
 
 ## GitHub Actions integration
 
