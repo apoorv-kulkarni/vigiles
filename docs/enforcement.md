@@ -148,6 +148,16 @@ The ordinary `diff` command still reads local `.vigiles.yaml`, so an agent that
 can modify that policy can change which findings block it. For committed work,
 use `gate` with base/head selected by the trusted launcher; it ignores local policy.
 
+The unreleased [local MCP server](mcp.md) also reads policy and suppressions from
+a trusted base commit chosen at startup. It keeps that baseline in memory and
+checks the files currently on disk, including untracked and ignored manifests.
+Its single tool takes no arguments, so calls cannot choose a weaker policy or
+omit files. A second snapshot detects changes during registry lookups and returns
+`incomplete` when observed. This is advisory feedback on inspected bytes; the
+agent can still skip the tool, change files afterward, or bypass it with the same
+OS privileges. Keep the executable and launch configuration outside its control
+and require the separate GitHub gate before merging.
+
 `scan --strict` additionally turns known inventory, OSV, recency and reported
 Python `.pth` coverage failures into exit 2, preserves partial findings, and
 rejects skip flags. Empty inventory is incomplete. Homebrew has no OSV coverage.

@@ -11,7 +11,9 @@ go build -o vigiles .
 go test ./... -v -count=1
 ```
 
-Vigiles requires Go 1.22+ and has **zero external dependencies** — stdlib only. Please keep it that way.
+Vigiles requires Go 1.24+ and has **zero external dependencies** (stdlib only).
+Use a currently supported Go release for development. The local MCP server uses
+Go's `os.Root` API to confine working-tree reads. Please keep Vigiles dependency-free.
 
 ## What to work on
 
@@ -51,6 +53,8 @@ internal/signal/       Core Signal model — all checkers produce []signal.Signa
 internal/scanner/      Package inventory per ecosystem (Scanner interface)
 internal/checker/      Risk analysis (OSV, heuristics, recency, pinning, npm scripts)
 internal/diff/         Dependency file comparison
+internal/gate/         Trusted-base policy and commit/working-tree checks
+internal/mcp/          Local tools-only MCP stdio server
 internal/reporter/     Output formatting (table, JSON, summary)
 cmd/                   CLI entry point
 testdata/              Test fixtures

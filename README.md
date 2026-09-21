@@ -323,6 +323,14 @@ policy outside the agent's writable environment. An agent's voluntary invocation
 of Vigiles is not an enforcement boundary. MCP and runtime hooks are not included
 in this release candidate.
 
+**Unreleased: local MCP server.** Source builds now support
+`vigiles mcp --repo /absolute/repo --base FULL_TRUSTED_COMMIT_ID` on Linux and
+macOS. Its read-only `check_dependency_changes` tool checks the working tree,
+including uncommitted manifests, against the baseline and policy fixed at startup.
+Tool calls cannot override the repository, baseline, policy, or suppressions.
+Results include a `pass`, `blocked`, or `incomplete` verdict and content hashes.
+The required GitHub check remains the merge gate. See [MCP setup and limits](docs/mcp.md).
+
 ### Block on CVEs, surface everything else as annotations
 
 The recommended pattern: fail the build on known vulnerabilities, upload a
@@ -441,6 +449,10 @@ Vigiles provides **informational signals**, not security guarantees.
 - [x] Immutable dependency gate with policy from the base commit
 - [x] Composite GitHub Action for agent-generated pull requests
 - [x] Linux AMD64 and macOS Intel/Apple Silicon releases with SLSA provenance
+
+### Unreleased
+
+- [x] Local MCP server with trusted baseline and working-tree dependency checks
 
 ### v0.4 — signal quality and stateful detection
 

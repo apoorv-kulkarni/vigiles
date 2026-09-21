@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -100,6 +101,15 @@ func (c *RecencyChecker) CheckVersionWithError(name, version string) (*signal.Si
 }
 
 func (c *RecencyChecker) checkPyPI(pkg scanner.Package) (*signal.Signal, error) {
+	return c.checkPyPIContext(context.Background(), pkg)
+}
+
+// CheckVersionContext allows a local tool request to cancel registry work.
+func (c *RecencyChecker) CheckVersionContext(ctx context.Context, name, version string) (*signal.Signal, error) {
+	return c.checkPyPIContext(ctx, scanner.Package{Name: name, Version: version, Ecosystem: "pip"})
+}
+
+func (c *RecencyChecker) checkPyPIContext(ctx context.Context, pkg scanner.Package) (*signal.Signal, error) {
 	cacheKey := pkg.Name + "@" + pkg.Version
 
 	c.mu.Lock()
@@ -107,7 +117,7 @@ func (c *RecencyChecker) checkPyPI(pkg scanner.Package) (*signal.Signal, error) 
 	c.mu.Unlock()
 
 	if !cached {
-		uploadTime, found, err := c.fetchUploadTime(pkg.Name, pkg.Version)
+		uploadTime, found, err := c.fetchUploadTimeContext(ctx, pkg.Name, pkg.Version)
 		if err != nil {
 			return nil, err
 		}
@@ -136,8 +146,16 @@ func (c *RecencyChecker) checkPyPI(pkg scanner.Package) (*signal.Signal, error) 
 }
 
 func (c *RecencyChecker) fetchUploadTime(name, version string) (time.Time, bool, error) {
+	return c.fetchUploadTimeContext(context.Background(), name, version)
+}
+
+func (c *RecencyChecker) fetchUploadTimeContext(ctx context.Context, name, version string) (time.Time, bool, error) {
 	url := fmt.Sprintf("https://pypi.org/pypi/%s/%s/json", name, version)
-	resp, err := c.client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("PyPI request failed for %s: %w", name, err)
 	}
