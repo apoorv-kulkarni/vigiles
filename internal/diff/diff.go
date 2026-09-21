@@ -174,10 +174,13 @@ func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
 }
 
 func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recency recencyVersionChecker, npmRisk npmRiskChecker) []Entry {
-	var entries []Entry
+	entries, consumedOld, consumedNew := pnpmArtifactChanges(oldDeps, newDeps)
 
 	// Check for added and updated
 	for key, newVer := range newDeps {
+		if consumedNew[key] {
+			continue
+		}
 		name := dependencyDisplayName(key)
 		oldVer, existed := oldDeps[key]
 		if !existed {
@@ -199,6 +202,9 @@ func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recen
 
 	// Check for removed
 	for key, oldVer := range oldDeps {
+		if consumedOld[key] {
+			continue
+		}
 		if _, exists := newDeps[key]; !exists {
 			entries = append(entries, Entry{
 				Name: dependencyDisplayName(key), Ecosystem: ecosystem,
@@ -221,6 +227,50 @@ func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recen
 	})
 
 	return entries
+}
+
+func pnpmArtifactChanges(oldDeps, newDeps map[string]string) ([]Entry, map[string]bool, map[string]bool) {
+	oldByIdentity := map[string]string{}
+	newByIdentity := map[string]string{}
+	for key := range oldDeps {
+		if identity, _, ok := pnpmDependencyIdentity(key); ok {
+			oldByIdentity[identity] = key
+		}
+	}
+	for key := range newDeps {
+		if identity, _, ok := pnpmDependencyIdentity(key); ok {
+			newByIdentity[identity] = key
+		}
+	}
+
+	consumedOld := map[string]bool{}
+	consumedNew := map[string]bool{}
+	var entries []Entry
+	for identity, oldKey := range oldByIdentity {
+		newKey, ok := newByIdentity[identity]
+		if !ok || oldKey == newKey {
+			continue
+		}
+		_, version, ok := pnpmDependencyIdentity(oldKey)
+		if !ok {
+			continue
+		}
+		name := dependencyDisplayName(oldKey)
+		entries = append(entries, Entry{
+			Name: name, Ecosystem: "npm", Status: Updated,
+			OldVersion: version, NewVersion: version,
+			Signals: []signal.Signal{{
+				Package: name, Version: version, Ecosystem: "npm",
+				Type: "heuristic", Severity: "medium", ID: "VIGILES-NPM-ARTIFACT-CHANGE",
+				Summary: "Artifact integrity changed without a version change",
+				Details: "The pnpm lockfile selects different integrity metadata for the same package version.",
+				Remediation: "Review the pnpm lockfile integrity change independently before accepting it.",
+			}},
+		})
+		consumedOld[oldKey] = true
+		consumedNew[newKey] = true
+	}
+	return entries, consumedOld, consumedNew
 }
 
 func statusOrder(s Status) int {
