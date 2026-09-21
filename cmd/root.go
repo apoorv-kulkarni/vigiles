@@ -424,13 +424,19 @@ func runDiffCmd(args []string) int {
 	fs.SetOutput(os.Stderr)
 	outputFmt := fs.String("format", "table", "Output format: table, json")
 	failOnFlag := fs.String("fail-on", "", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
+	baseRef := fs.String("base-ref", "", "Compare the current dependency file against the same path at a git ref")
 
 	if err := fs.Parse(args); err != nil {
 		return ExitError
 	}
 
 	remaining := fs.Args()
-	if len(remaining) != 2 {
+	if *baseRef != "" {
+		if len(remaining) != 1 {
+			fmt.Fprintln(os.Stderr, "Usage: vigiles diff [--format table|json] --base-ref <git-ref> <new-file>")
+			return ExitError
+		}
+	} else if len(remaining) != 2 {
 		fmt.Fprintln(os.Stderr, "Usage: vigiles diff [--format table|json] <old-file> <new-file>")
 		return ExitError
 	}
@@ -452,10 +458,20 @@ func runDiffCmd(args []string) int {
 		return ExitError
 	}
 
+	if *strict && *baseRef != "" {
+		fmt.Fprintln(os.Stderr, "Error: --strict is not yet supported with --base-ref")
+		return ExitError
+	}
 	if *strict {
 		return runStrictDiff(remaining[0], remaining[1], *outputFmt, cfg, failOn)
 	}
-	result, err := diff.Run(remaining[0], remaining[1])
+
+	var result *diff.Result
+	if *baseRef != "" {
+		result, err = diff.RunFromGitRef(*baseRef, remaining[0])
+	} else {
+		result, err = diff.Run(remaining[0], remaining[1])
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitError
