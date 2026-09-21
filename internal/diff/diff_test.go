@@ -2,6 +2,7 @@ package diff
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -33,6 +34,85 @@ func TestMain(m *testing.M) {
 	newRecencyChecker = origRecency
 	newNpmRiskChecker = origNpmRisk
 	os.Exit(code)
+}
+
+func gitTestRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
+	}
+}
+
+func initGitTestRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitTestRun(t, dir, "init")
+	gitTestRun(t, dir, "config", "user.email", "vigiles-test@example.invalid")
+	gitTestRun(t, dir, "config", "user.name", "Vigiles Test")
+	return dir
+}
+
+func TestRunFromGitRef(t *testing.T) {
+	dir := initGitTestRepo(t)
+	manifest := filepath.Join(dir, "requirements.txt")
+	if err := os.WriteFile(manifest, []byte("requests==2.31.0\nflask==2.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, dir, "add", "requirements.txt")
+	gitTestRun(t, dir, "commit", "-m", "baseline")
+
+	if err := os.WriteFile(manifest, []byte("requests==2.32.0\nflask==2.0.0\nboto3==1.28.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunFromGitRef("HEAD", manifest)
+	if err != nil {
+		t.Fatalf("RunFromGitRef: %v", err)
+	}
+
+	counts := map[Status]int{}
+	for _, entry := range result.Entries {
+		counts[entry.Status]++
+	}
+	if counts[Added] != 1 || counts[Updated] != 1 || counts[Removed] != 0 {
+		t.Fatalf("unexpected diff counts: %v", counts)
+	}
+	if result.OldFile != "HEAD:requirements.txt" {
+		t.Fatalf("OldFile = %q, want HEAD:requirements.txt", result.OldFile)
+	}
+}
+
+func TestRunFromGitRef_FirstAddition(t *testing.T) {
+	dir := initGitTestRepo(t)
+	gitTestRun(t, dir, "commit", "--allow-empty", "-m", "baseline")
+
+	manifest := filepath.Join(dir, "requirements.txt")
+	if err := os.WriteFile(manifest, []byte("requests==2.31.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunFromGitRef("HEAD", manifest)
+	if err != nil {
+		t.Fatalf("RunFromGitRef first addition: %v", err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Status != Added || result.Entries[0].Name != "requests" {
+		t.Fatalf("unexpected first-addition result: %#v", result.Entries)
+	}
+}
+
+func TestRunFromGitRef_InvalidRef(t *testing.T) {
+	dir := initGitTestRepo(t)
+	manifest := filepath.Join(dir, "requirements.txt")
+	if err := os.WriteFile(manifest, []byte("requests==2.31.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, dir, "add", "requirements.txt")
+	gitTestRun(t, dir, "commit", "-m", "baseline")
+
+	if _, err := RunFromGitRef("definitely-not-a-ref", manifest); err == nil {
+		t.Fatal("expected invalid git ref error")
+	}
 }
 
 // --- Requirements.txt parsing ---

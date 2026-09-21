@@ -5,10 +5,12 @@ package diff
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -96,6 +98,73 @@ func Run(oldPath, newPath string) (*Result, error) {
 		Ecosystem: eco1,
 		Entries:   entries,
 	}, nil
+}
+
+func RunFromGitRef(baseRef, newPath string) (*Result, error) {
+	newDeps, ecosystem, err := parseFile(newPath)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", newPath, err)
+	}
+
+	repoRoot, relPath, err := gitFileContext(newPath)
+	if err != nil {
+		return nil, err
+	}
+
+	verify := exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", baseRef+"^{commit}")
+	if output, err := verify.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("invalid git ref %q: %s", baseRef, strings.TrimSpace(string(output)))
+	}
+
+	gitPath := filepath.ToSlash(relPath)
+	oldDeps := map[string]string{}
+	show := exec.Command("git", "-C", repoRoot, "show", baseRef+":"+gitPath)
+	if data, err := show.Output(); err == nil {
+		parsed, oldEcosystem, parseErr := parseData(gitPath, data)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing %s:%s: %w", baseRef, gitPath, parseErr)
+		}
+		if oldEcosystem != ecosystem {
+			return nil, fmt.Errorf("file types don't match: %s:%s (%s) vs %s (%s)", baseRef, gitPath, oldEcosystem, newPath, ecosystem)
+		}
+		oldDeps = parsed
+	} else {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("reading %s:%s: %w", baseRef, gitPath, err)
+		}
+		// A manifest that does not exist at the base ref is a valid first-addition diff.
+	}
+
+	return &Result{
+		OldFile:   baseRef + ":" + gitPath,
+		NewFile:   newPath,
+		Ecosystem: ecosystem,
+		Entries:   computeDiff(oldDeps, newDeps, ecosystem),
+	}, nil
+}
+
+func gitFileContext(path string) (string, string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving %s: %w", path, err)
+	}
+
+	cmd := exec.Command("git", "-C", filepath.Dir(absPath), "rev-parse", "--show-toplevel")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("%s is not inside a git repository: %s", path, strings.TrimSpace(string(output)))
+	}
+
+	repoRoot := strings.TrimSpace(string(output))
+	relPath, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving repository path for %s: %w", path, err)
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("%s is outside git repository %s", path, repoRoot)
+	}
+	return repoRoot, relPath, nil
 }
 
 func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
@@ -539,7 +608,10 @@ func parseFile(path string) (map[string]string, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	return parseData(path, data)
+}
 
+func parseData(path string, data []byte) (map[string]string, string, error) {
 	base := strings.ToLower(filepath.Base(path))
 
 	switch {
