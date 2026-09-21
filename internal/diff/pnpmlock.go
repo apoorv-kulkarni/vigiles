@@ -2,26 +2,12 @@ package diff
 
 import (
 	"fmt"
-	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 const pnpmLockKeyPrefix = "\x00pnpm-lock\x00"
-
-var (
-	pnpmLockVersion = regexp.MustCompile(`^lockfileVersion:\s*['"]?([^'"]+)['"]?\s*(?:#.*)?package diff
-
-import (
-	"fmt"
-	"regexp"
-	"strings"
-)
-
-const pnpmLockKeyPrefix = "\x00pnpm-lock\x00"
-
-)
-	pnpmIntegrity   = regexp.MustCompile(`integrity:\s*['"]?([^,'"}[:space:]]+)`)
-)
 
 type pnpmLockPackage struct {
 	name       string
@@ -53,12 +39,12 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 		if err != nil {
 			return fmt.Errorf("pnpm-lock.yaml package %s@%s: %w", current.name, current.version, err)
 		}
-		key := pnpmDependencyKey(current.name, current.version, integrity)
-		if prior, ok := resolutions[key]; ok && prior != current.resolution {
+		identity := strings.ToLower(strings.TrimSpace(current.name)) + "\x00" + current.version
+		if prior, ok := resolutions[identity]; ok && prior != integrity {
 			return fmt.Errorf("pnpm-lock.yaml package %s@%s has conflicting resolution metadata", current.name, current.version)
 		}
-		resolutions[key] = current.resolution
-		deps[key] = current.version
+		resolutions[identity] = integrity
+		deps[pnpmDependencyKey(current.name, current.version, integrity)] = current.version
 		current = nil
 		inResolution = false
 		return nil
@@ -79,10 +65,14 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 				return nil, fmt.Errorf("pnpm-lock.yaml pnpmfile hooks are not covered")
 			case strings.HasPrefix(trimmed, "untrackedPnpmfileReadPackageHook:"):
 				return nil, fmt.Errorf("pnpm-lock.yaml untracked pnpmfile hooks are not covered")
-			}
-			if match := pnpmLockVersion.FindStringSubmatch(trimmed); len(match) == 2 {
-				if match[1] != "9.0" {
-					return nil, fmt.Errorf("unsupported pnpm lockfile version %q", match[1])
+			case strings.HasPrefix(trimmed, "lockfileVersion:"):
+				value := strings.TrimSpace(strings.TrimPrefix(trimmed, "lockfileVersion:"))
+				if idx := strings.Index(value, " #"); idx >= 0 {
+					value = strings.TrimSpace(value[:idx])
+				}
+				value = strings.Trim(value, "'\"")
+				if value != "9.0" {
+					return nil, fmt.Errorf("unsupported pnpm lockfile version %q", value)
 				}
 				seenVersion = true
 			}
@@ -163,8 +153,10 @@ func parsePNPMPackageYAMLKey(raw string) (string, error) {
 		return strings.ReplaceAll(raw[1:len(raw)-1], "''", "'"), nil
 	}
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		value := raw[1 : len(raw)-1]
-		value = strings.ReplaceAll(value, "\\"", """)
+		value, err := strconv.Unquote(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid quoted YAML package key")
+		}
 		return value, nil
 	}
 	if strings.Contains(raw, ": ") {
@@ -201,11 +193,20 @@ func validatePNPMResolution(resolution string) (string, error) {
 			return "", fmt.Errorf("unsupported package source in resolution metadata")
 		}
 	}
-	match := pnpmIntegrity.FindStringSubmatch(resolution)
-	if len(match) != 2 {
+
+	idx := strings.Index(lower, "integrity:")
+	if idx < 0 {
 		return "", fmt.Errorf("resolution does not contain package integrity")
 	}
-	return match[1], nil
+	tail := strings.TrimSpace(resolution[idx+len("integrity:"):])
+	tail = strings.TrimLeft(tail, "'\"")
+	parts := strings.FieldsFunc(tail, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ',' || r == '}' || r == '\'' || r == '"'
+	})
+	if len(parts) == 0 || parts[0] == "" {
+		return "", fmt.Errorf("resolution does not contain package integrity")
+	}
+	return parts[0], nil
 }
 
 func pnpmDependencyKey(name, version, integrity string) string {
