@@ -120,6 +120,10 @@ func parseStrict(name string, data []byte) (map[string]string, string, error) {
 	if data == nil {
 		return map[string]string{}, eco, nil
 	}
+	if base == "uv.lock" {
+		deps, err := parseUVLock(data)
+		return deps, eco, err
+	}
 	if eco == "npm" {
 		deps, err := parseStrictNPM(base, data)
 		return deps, eco, err
