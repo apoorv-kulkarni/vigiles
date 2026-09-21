@@ -262,8 +262,8 @@ func pnpmArtifactChanges(oldDeps, newDeps map[string]string) ([]Entry, map[strin
 			Signals: []signal.Signal{{
 				Package: name, Version: version, Ecosystem: "npm",
 				Type: "heuristic", Severity: "medium", ID: "VIGILES-NPM-ARTIFACT-CHANGE",
-				Summary: "Artifact integrity changed without a version change",
-				Details: "The pnpm lockfile selects different integrity metadata for the same package version.",
+				Summary:     "Artifact integrity changed without a version change",
+				Details:     "The pnpm lockfile selects different integrity metadata for the same package version.",
 				Remediation: "Review the pnpm lockfile integrity change independently before accepting it.",
 			}},
 		})
