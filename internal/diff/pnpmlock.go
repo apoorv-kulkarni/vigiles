@@ -58,6 +58,14 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
 		if indent == 0 {
+			switch {
+			case trimmed == "patchedDependencies:":
+				return nil, fmt.Errorf("pnpm-lock.yaml patchedDependencies are not covered")
+			case strings.HasPrefix(trimmed, "pnpmfileChecksum:"):
+				return nil, fmt.Errorf("pnpm-lock.yaml pnpmfile hooks are not covered")
+			case strings.HasPrefix(trimmed, "untrackedPnpmfileReadPackageHook:"):
+				return nil, fmt.Errorf("pnpm-lock.yaml untracked pnpmfile hooks are not covered")
+			}
 			if match := pnpmLockVersion.FindStringSubmatch(trimmed); len(match) == 2 {
 				if match[1] != "9.0" {
 					return nil, fmt.Errorf("unsupported pnpm lockfile version %q", match[1])
