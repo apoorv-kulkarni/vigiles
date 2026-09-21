@@ -79,11 +79,13 @@ func TestWorktreeDiscoversIgnoredUntrackedAndDeletedInputs(t *testing.T) {
 	writeWorktree(t, repo, ".gitignore", "hidden/\n")
 	writeWorktree(t, repo, "hidden/requirements.txt", "-r secret.txt\n")
 	writeWorktree(t, repo, "new/uv.lock", "version = 1\nrevision = 3\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n")
+	writeWorktree(t, repo, "new/pnpm-lock.yaml", "lockfileVersion: '9.0'\n\npackages:\n  react@19.1.1:\n    resolution: {integrity: sha512-react}\n")
 	r := w.Check(context.Background())
-	if Decide(r, "test", io.Discard) != 2 || len(r.Inputs) != 3 || len(r.Incomplete) < 1 {
+	if Decide(r, "test", io.Discard) != 2 || len(r.Inputs) != 4 || len(r.Incomplete) < 1 {
 		t.Fatalf("missed worktree inputs: %+v", r)
 	}
-	if r.Inputs[0].Path != "hidden/requirements.txt" || r.Inputs[1].Path != "new/uv.lock" || r.Inputs[2].Path != "old/requirements.txt" {
+	if r.Inputs[0].Path != "hidden/requirements.txt" || r.Inputs[1].Path != "new/pnpm-lock.yaml" ||
+		r.Inputs[2].Path != "new/uv.lock" || r.Inputs[3].Path != "old/requirements.txt" {
 		t.Fatalf("wrong paths: %+v", r.Inputs)
 	}
 }
