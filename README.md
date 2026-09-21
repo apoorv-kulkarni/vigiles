@@ -134,11 +134,18 @@ Supported:
 - requirements.txt
 - package.json
 - package-lock.json
+- uv.lock
 
 ```bash
 vigiles diff old-requirements.txt new-requirements.txt
 vigiles diff --format json old/package.json new/package.json
 ```
+
+For `uv.lock`, Vigiles supports schema version 1 packages resolved from the public
+PyPI registry, including marker-specific cases where one package has multiple
+locked versions. Editable and virtual workspace packages are treated as local
+project code. Alternate registries and other package source types are rejected
+rather than silently treated as covered.
 
 Example:
 
