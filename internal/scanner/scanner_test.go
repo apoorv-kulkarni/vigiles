@@ -472,6 +472,15 @@ func TestNpmScannerScanNoOutput(t *testing.T) {
 	}
 }
 
+func TestNpmScannerReportsPartialInventory(t *testing.T) {
+	dir := stubPath(t)
+	stubBin(t, dir, "npm", "--global", "", `{"dependencies":{"axios":{"version":"1.7.2"}}}`)
+	pkgs, err := (&NpmScanner{}).Scan()
+	if err == nil || len(pkgs) != 1 || pkgs[0].Name != "axios" {
+		t.Fatalf("expected partial packages and a coverage error, got %+v, %v", pkgs, err)
+	}
+}
+
 func TestBrewScannerScan(t *testing.T) {
 	dir := stubPath(t)
 	stubBin(t, dir, "brew", "", "",

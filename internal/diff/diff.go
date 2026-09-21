@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -97,9 +98,13 @@ func Run(oldPath, newPath string) (*Result, error) {
 }
 
 func computeDiff(oldDeps, newDeps map[string]string, ecosystem string) []Entry {
-	var entries []Entry
 	recency := newRecencyChecker()
 	npmRisk := newNpmRiskChecker()
+	return computeDiffWith(oldDeps, newDeps, ecosystem, recency, npmRisk)
+}
+
+func computeDiffWith(oldDeps, newDeps map[string]string, ecosystem string, recency recencyVersionChecker, npmRisk npmRiskChecker) []Entry {
+	var entries []Entry
 
 	// Check for added and updated
 	for name, newVer := range newDeps {
@@ -227,19 +232,21 @@ func normalizeVersionForRecency(version, ecosystem string) (string, bool) {
 		// For pip, only exact pins should hit recency lookup.
 		return "", false
 	}
-	if v == "" {
+	if v == "" || strings.ContainsAny(v, "*,<>=!~| ") {
 		return "", false
 	}
 	return v, true
 }
 
 type npmRegistryRiskChecker struct {
-	client *http.Client
+	client     *http.Client
+	incomplete []string
 }
 
 func (c *npmRegistryRiskChecker) CheckNewPackage(name, version string) []signal.Signal {
 	v, ok := exactNpmVersion(version)
 	if !ok {
+		c.incomplete = append(c.incomplete, fmt.Sprintf("npm metadata: %s does not have an exact registry version", name))
 		return nil
 	}
 
@@ -257,6 +264,7 @@ func (c *npmRegistryRiskChecker) CheckVersionChange(name, oldVersion, newVersion
 	oldV, okOld := exactNpmVersion(oldVersion)
 	newV, okNew := exactNpmVersion(newVersion)
 	if !okOld || !okNew {
+		c.incomplete = append(c.incomplete, fmt.Sprintf("npm metadata: %s update does not have two exact registry versions", name))
 		return nil
 	}
 
@@ -275,14 +283,20 @@ func (c *npmRegistryRiskChecker) CheckVersionChange(name, oldVersion, newVersion
 // resolve. Ranges are skipped because they don't identify a single release.
 func exactNpmVersion(version string) (string, bool) {
 	v := strings.TrimSpace(version)
-	if v == "" || strings.ContainsAny(v, "^~<>*| ") {
+	if !npmExactVersion.MatchString(v) {
 		return "", false
 	}
 	return v, true
 }
 
+var npmExactVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
 func (c *npmRegistryRiskChecker) fetchPackageVersion(name, version string) (npmVersionMetadata, bool) {
-	if c == nil || c.client == nil {
+	if c == nil {
+		return npmVersionMetadata{}, false
+	}
+	c.incomplete = append(c.incomplete, fmt.Sprintf("npm metadata unavailable for %s@%s", name, version))
+	if c.client == nil {
 		return npmVersionMetadata{}, false
 	}
 	u := fmt.Sprintf("https://registry.npmjs.org/%s/%s", url.PathEscape(name), url.PathEscape(version))
@@ -298,12 +312,10 @@ func (c *npmRegistryRiskChecker) fetchPackageVersion(name, version string) (npmV
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return npmVersionMetadata{}, false
 	}
-	if meta.Name == "" {
-		meta.Name = name
+	if meta.Name != name || meta.Version != version {
+		return npmVersionMetadata{}, false
 	}
-	if meta.Version == "" {
-		meta.Version = version
-	}
+	c.incomplete = c.incomplete[:len(c.incomplete)-1]
 	return meta, true
 }
 

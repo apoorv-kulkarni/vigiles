@@ -73,7 +73,8 @@ func WriteSARIF(w io.Writer, report Report) error {
 			},
 			"results": results,
 			"invocations": []map[string]any{{
-				"executionSuccessful": true,
+				"executionSuccessful": report.Status != "incomplete",
+				"properties":          map[string]any{"incomplete": report.Incomplete, "skipped": report.Skipped},
 			}},
 		}},
 	}

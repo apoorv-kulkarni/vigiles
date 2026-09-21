@@ -1,0 +1,27 @@
+name: Vigiles dependency gate
+description: Inspect PR dependency changes with immutable inputs and policy from the base commit.
+author: Apoorv Kulkarni
+branding:
+  icon: shield
+  color: blue
+outputs:
+  report:
+    description: Absolute path to the JSON report, including on blocked or incomplete runs.
+    value: ${{ steps.gate.outputs.report }}
+  verdict:
+    description: pass, blocked, or incomplete.
+    value: ${{ steps.gate.outputs.verdict }}
+runs:
+  using: composite
+  steps:
+    - name: Set up trusted Go toolchain
+      uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+      with:
+        go-version: '1.26.4'
+        cache: false
+    - name: Evaluate immutable PR inputs
+      id: gate
+      shell: bash
+      env:
+        VIGILES_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$VIGILES_ACTION_PATH/scripts/action-gate.sh"

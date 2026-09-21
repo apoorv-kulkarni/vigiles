@@ -14,6 +14,9 @@ import (
 
 // Report is the full scan output, serialized to JSON.
 type Report struct {
+	Status     string            `json:"status"`
+	Incomplete []string          `json:"incomplete,omitempty"`
+	Skipped    []string          `json:"skipped,omitempty"`
 	Version    string            `json:"version"`
 	Timestamp  time.Time         `json:"timestamp"`
 	DurationMs int64             `json:"duration_ms"`
@@ -34,6 +37,7 @@ func NewReport(version string, elapsed time.Duration, ecosystems []string,
 	}
 	signal.SortSignals(signals)
 	return Report{
+		Status:     "complete",
 		Version:    version,
 		Timestamp:  time.Now().UTC(),
 		DurationMs: elapsed.Milliseconds(),
@@ -56,7 +60,10 @@ func PrintTable(w io.Writer, report Report) {
 	fmt.Fprintln(w)
 	printBanner(w)
 
-	if len(report.Signals) == 0 {
+	if report.Status == "incomplete" {
+		fmt.Fprintf(w, "\n  Incomplete scan: %s\n", strings.Join(report.Incomplete, "; "))
+	}
+	if len(report.Signals) == 0 && report.Status != "incomplete" {
 		fmt.Fprintf(w, "\n  ✅ No issues found across %d packages (%s)\n\n",
 			len(report.Packages), strings.Join(report.Ecosystems, ", "))
 		printStats(w, report)
@@ -201,7 +208,10 @@ func PrintSummary(w io.Writer, report Report) {
 	fmt.Fprintln(w)
 	printBanner(w)
 
-	if len(report.Signals) == 0 {
+	if report.Status == "incomplete" {
+		fmt.Fprintf(w, "\n  Incomplete scan: %s\n", strings.Join(report.Incomplete, "; "))
+	}
+	if len(report.Signals) == 0 && report.Status != "incomplete" {
 		fmt.Fprintf(w, "\n  ✅ Clean: %d packages, 0 findings\n\n", len(report.Packages))
 		return
 	}
