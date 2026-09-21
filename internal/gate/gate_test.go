@@ -141,6 +141,25 @@ source = { registry = "https://pypi.org/simple" }
 	}
 }
 
+func TestGateSupportsPNPMLock(t *testing.T) {
+	repo := fixtureRepo(t)
+	lock := `lockfileVersion: '9.0'
+
+packages:
+  react@19.1.1:
+    resolution: {integrity: sha512-react}
+`
+	base := snapshot(t, repo, "", map[string]string{"pnpm-lock.yaml": lock}, "")
+	head := snapshot(t, repo, base, map[string]string{"pnpm-lock.yaml": lock, "README.md": "changed"}, "")
+	r, err := Run(repo, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "complete" || len(r.Inputs) != 1 || r.Inputs[0].Path != "pnpm-lock.yaml" {
+		t.Fatalf("pnpm lockfile was not covered: %+v", r)
+	}
+}
+
 func TestGateRejectsAbsentManifestsAndMutableRefs(t *testing.T) {
 	repo := fixtureRepo(t)
 	base := snapshot(t, repo, "", map[string]string{"README.md": "a"}, "")
