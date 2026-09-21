@@ -52,6 +52,7 @@ var validFailOnTypes = map[string]bool{
 }
 
 type scanOptions struct {
+	Strict           bool
 	EnableProvenance bool
 	EnableSigstore   bool
 	WatchMode        bool
@@ -119,6 +120,8 @@ func Execute() int {
 		return runScanCmd(os.Args[2:])
 	case "diff":
 		return runDiffCmd(os.Args[2:])
+	case "gate":
+		return runGateCmd(os.Args[2:])
 	case "version":
 		fmt.Printf("vigiles %s\n", Version)
 		return ExitClean
@@ -134,6 +137,7 @@ func Execute() int {
 func runScanCmd(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	strict := fs.Bool("strict", false, "Exit 2 when required coverage is incomplete")
 	ecosystems := fs.String("ecosystems", "auto", "Comma-separated: pip,npm,brew or 'auto'")
 	outputFmt := fs.String("format", "table", "Output format: table, json, summary, sarif")
 	outputFile := fs.String("output", "", "Write results to file (default: stdout)")
@@ -188,6 +192,7 @@ func runScanCmd(args []string) int {
 	}
 
 	opts := scanOptions{
+		Strict:           *strict,
 		EnableProvenance: *provenance,
 		EnableSigstore:   *sigstore,
 		WatchMode:        *watch,
@@ -213,10 +218,27 @@ func runScan(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuri
 
 func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln, skipHeuristic, skipRecency, verbose bool, progress io.Writer, opts scanOptions) int {
 	startTime := time.Now()
+	var incomplete []string
+	var skipped []string
+	if skipVuln {
+		skipped = append(skipped, "vulnerabilities")
+	}
+	if skipHeuristic {
+		skipped = append(skipped, "heuristics")
+	}
+	if skipRecency {
+		skipped = append(skipped, "recency")
+	}
+	if opts.Strict && len(skipped) > 0 {
+		incomplete = append(incomplete, "strict scan does not permit skipped checks")
+	}
+	if opts.Strict && (opts.EnableProvenance || opts.EnableSigstore) {
+		incomplete = append(incomplete, "provenance and attestation completeness is not supported in strict mode")
+	}
 
 	if len(ecoList) == 0 {
 		fmt.Fprintln(progress, "⚠  No supported package managers detected on this system.")
-		return ExitClean
+		incomplete = append(incomplete, "no ecosystems inventoried")
 	}
 
 	if verbose {
@@ -228,16 +250,18 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 	for _, eco := range ecoList {
 		s := scanner.Get(eco)
 		if s == nil {
+			incomplete = append(incomplete, "scanner unavailable: "+eco)
 			continue
 		}
 		fmt.Fprintf(progress, "▸ Scanning %s packages...\n", eco)
 		pkgs, err := s.Scan()
+		allPackages = append(allPackages, pkgs...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ⚠  %s scan failed: %v\n", eco, err)
+			incomplete = append(incomplete, "inventory failed: "+eco)
 			continue
 		}
 		fmt.Fprintf(progress, "  Found %d packages\n", len(pkgs))
-		allPackages = append(allPackages, pkgs...)
 	}
 
 	// D: Deduplicate packages (npm local+global can overlap)
@@ -249,30 +273,39 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 
 	if len(allPackages) == 0 {
 		fmt.Fprintln(progress, "No packages found to audit.")
-		return ExitClean
+		incomplete = append(incomplete, "no packages inventoried")
 	}
 
 	// Phase 2: Checks
 	var signals []signal.Signal
 
-	if !skipVuln {
+	if !skipVuln && len(allPackages) > 0 {
+		if hasEcosystem(ecoList, "brew") {
+			incomplete = append(incomplete, "OSV does not cover Homebrew")
+		}
 		t := time.Now()
 		fmt.Fprintf(progress, "▸ Checking %d packages against OSV...\n", len(allPackages))
 		vulns, err := checker.NewOSVChecker().Check(allPackages)
+		signals = append(signals, vulns...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ⚠  OSV check failed: %v\n", err)
+			incomplete = append(incomplete, "OSV lookup failed; results may be partial")
 		} else {
 			fmt.Fprintf(progress, "  Found %d vulnerabilities (%s)\n", len(vulns), time.Since(t).Round(time.Millisecond))
-			signals = append(signals, vulns...)
 		}
 	}
 
-	if !skipHeuristic {
+	if !skipHeuristic && len(allPackages) > 0 {
 		t := time.Now()
 		fmt.Fprintf(progress, "▸ Running heuristic checks...\n")
 		h := checker.NewHeuristicChecker().Check(allPackages)
 		fmt.Fprintf(progress, "  Found %d heuristic signals (%s)\n", len(h), time.Since(t).Round(time.Millisecond))
 		signals = append(signals, h...)
+		for _, sig := range h {
+			if sig.ID == "VIGILES-PTH-SCAN-SKIPPED" {
+				incomplete = append(incomplete, "Python .pth scan skipped")
+			}
+		}
 
 		if hasEcosystem(ecoList, "npm") {
 			if _, err := os.Stat("package.json"); err == nil {
@@ -299,6 +332,9 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 		fmt.Fprintf(progress, "▸ Checking for recently published versions...\n")
 		rc := checker.NewRecencyChecker()
 		r, stats := rc.CheckWithStats(allPackages)
+		if stats.Errors > 0 {
+			incomplete = append(incomplete, fmt.Sprintf("PyPI recency unavailable for %d packages", stats.Errors))
+		}
 		if stats.Checked > 0 {
 			fmt.Fprintf(progress, "  Checked %d PyPI packages (%s)", stats.Checked, stats.Duration.Round(time.Millisecond))
 			if stats.Errors > 0 {
@@ -330,6 +366,10 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 
 	// Phase 3: Report
 	report := reporter.NewReport(Version, time.Since(startTime), ecoList, allPackages, signals)
+	report.Incomplete, report.Skipped = incomplete, skipped
+	if len(incomplete) > 0 {
+		report.Status = "incomplete"
+	}
 
 	output, cleanup, err := openOutput(outputFile)
 	if err != nil {
@@ -355,6 +395,9 @@ func runScanWithOptions(ecoList []string, outputFmt, outputFile string, skipVuln
 		reporter.PrintTable(output, report)
 	}
 
+	if opts.Strict && len(incomplete) > 0 {
+		return ExitError
+	}
 	if hasBlockingSignal(signals, opts.FailOn) {
 		return ExitFindings
 	}
@@ -415,9 +458,10 @@ func deduplicateSignals(sigs []signal.Signal) []signal.Signal {
 
 func runDiffCmd(args []string) int {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	strict := fs.Bool("strict", false, "Exit 2 on unsupported inputs or unavailable metadata")
 	fs.SetOutput(os.Stderr)
 	outputFmt := fs.String("format", "table", "Output format: table, json")
-	failOnFlag := fs.String("fail-on", "all", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
+	failOnFlag := fs.String("fail-on", "", "Signal types that trigger exit 1: vulnerability, heuristic, system-heuristic, trust-signal, all, none")
 
 	if err := fs.Parse(args); err != nil {
 		return ExitError
@@ -446,6 +490,9 @@ func runDiffCmd(args []string) int {
 		return ExitError
 	}
 
+	if *strict {
+		return runStrictDiff(remaining[0], remaining[1], *outputFmt, cfg, failOn)
+	}
 	result, err := diff.Run(remaining[0], remaining[1])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -621,6 +668,7 @@ func printUsage() {
 Usage:
   vigiles scan [flags]                  Scan installed packages
   vigiles diff <old-file> <new-file>    Compare dependency files
+  vigiles gate --base SHA --head SHA    Enforce dependency changes using base policy
   vigiles version                       Print version
   vigiles help                          Show this help
 
@@ -630,6 +678,7 @@ Scan flags:
   --output string       Write to file instead of stdout
   --fail-on string      Signal types that trigger exit 1: vulnerability, heuristic,
                         system-heuristic, trust-signal, all, none (default "all")
+  --strict              Exit 2 for known incomplete coverage; disallow skip flags
   --skip-vuln           Skip OSV vulnerability lookup
   --skip-heuristic      Skip heuristic checks
   --skip-recency        Skip recently-published check
@@ -641,6 +690,7 @@ Scan flags:
   --verbose             Show detailed progress
 
 Diff flags:
+  --strict              Fail closed on unsupported syntax or unavailable metadata
   --format string       table, json (default "table")
   --fail-on string      Signal types that trigger exit 1 (same values as scan)
 

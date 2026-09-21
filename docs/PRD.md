@@ -157,6 +157,12 @@ Confidence legend:
 
 ## 11. Open questions
 
+Agent enforcement foundation: `gate` reads immutable Git manifests and base
+policy, uses strict dependency comparison, and emits explicit pass/blocked/
+incomplete verdicts. The composite Action derives revisions from the PR event.
+See [enforcement scope and controls](enforcement.md). MCP parsing and local
+runtime hooks remain follow-ups; this gate is not a CVE scanner or sandbox.
+
 1. Should provenance mismatches be configurable as warning vs fail in CI?
 2. Should trust-signal severity be policy-tunable per organization?
 3. What minimum SARIF fields are required for best GitHub Code Scanning UX?

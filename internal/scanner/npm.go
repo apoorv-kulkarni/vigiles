@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 )
@@ -18,23 +19,28 @@ func (s *NpmScanner) Available() bool {
 
 func (s *NpmScanner) Scan() ([]Package, error) {
 	packages := make([]Package, 0)
+	var failures []error
 
 	// Scan global packages
 	globalPkgs, err := s.scanScope("--global")
 	if err == nil {
 		packages = append(packages, globalPkgs...)
+	} else {
+		failures = append(failures, fmt.Errorf("global npm inventory: %w", err))
 	}
 
 	// Scan local packages (if in a project directory)
 	localPkgs, err := s.scanScope("")
 	if err == nil {
 		packages = append(packages, localPkgs...)
+	} else {
+		failures = append(failures, fmt.Errorf("local npm inventory: %w", err))
 	}
 
 	if len(packages) == 0 {
 		return packages, fmt.Errorf("no npm packages found")
 	}
-	return packages, nil
+	return packages, errors.Join(failures...)
 }
 
 func (s *NpmScanner) scanScope(scopeFlag string) ([]Package, error) {

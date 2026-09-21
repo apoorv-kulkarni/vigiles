@@ -17,6 +17,9 @@ import (
 
 const DefaultFile = ".vigiles.yaml"
 
+// Parse reads policy from already selected, trusted bytes.
+func Parse(data []byte) (*Config, error) { return parse(data) }
+
 // Config is the parsed representation of a .vigiles.yaml file.
 type Config struct {
 	Version  int

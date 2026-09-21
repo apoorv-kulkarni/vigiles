@@ -94,6 +94,11 @@ func (c *RecencyChecker) CheckVersion(name, version, ecosystem string) *signal.S
 	return sig
 }
 
+// CheckVersionWithError preserves missing coverage for enforcement callers.
+func (c *RecencyChecker) CheckVersionWithError(name, version string) (*signal.Signal, error) {
+	return c.checkPyPI(scanner.Package{Name: name, Version: version, Ecosystem: "pip"})
+}
+
 func (c *RecencyChecker) checkPyPI(pkg scanner.Package) (*signal.Signal, error) {
 	cacheKey := pkg.Name + "@" + pkg.Version
 
@@ -113,7 +118,7 @@ func (c *RecencyChecker) checkPyPI(pkg scanner.Package) (*signal.Signal, error) 
 	}
 
 	if !entry.found {
-		return nil, nil
+		return nil, fmt.Errorf("PyPI upload time unavailable for %s@%s", pkg.Name, pkg.Version)
 	}
 
 	age := c.Now().Sub(entry.uploadTime)

@@ -218,6 +218,19 @@ This makes Vigiles usable as a CI gate.
 
 ## GitHub Actions
 
+For agent-generated PRs, the repository now includes a composite Action and
+`vigiles gate --base <full-sha> --head <full-sha>`. The gate reads policy from
+the base commit, discovers manifests in both Git trees, and blocks incomplete
+dependency comparisons. See [Enforcement for agents and CI](docs/enforcement.md)
+for the pinned workflow template, supported scope, parser restrictions, and
+required repository protections. The Action must be committed and published
+before other repositories can reference it.
+
+Local callers can use `vigiles diff --strict --format json old/requirements.txt
+new/requirements.txt` or `vigiles scan --strict`. Strict mode returns exit 2 for
+known missing coverage, independently of finding suppressions or `--fail-on none`.
+Normal scan output now reports known coverage failures as `status: incomplete`.
+
 ### Block on CVEs, surface everything else as annotations
 
 The recommended pattern: fail the build on known vulnerabilities, upload a
