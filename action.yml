@@ -24,4 +24,5 @@ runs:
       shell: bash
       env:
         VIGILES_ACTION_PATH: ${{ github.action_path }}
+        VIGILES_ACTION_REF: ${{ github.action_ref }}
       run: bash "$VIGILES_ACTION_PATH/scripts/action-gate.sh"

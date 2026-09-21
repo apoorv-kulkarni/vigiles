@@ -19,9 +19,6 @@ import (
 	"github.com/apoorv-kulkarni/vigiles/internal/signal"
 )
 
-// Version is set at build time via -ldflags "-X github.com/apoorv-kulkarni/vigiles/cmd.Version=..."
-var Version = "0.3.8"
-
 // Exit codes:
 //
 //	0 — scan completed, no findings

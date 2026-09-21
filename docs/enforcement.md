@@ -112,6 +112,17 @@ or incomplete runs; `outputs.verdict` contains the verdict when one is produced.
 The job summary contains only validated hashes and counts. An upload step may
 preserve the JSON using `if: always()` and an independently pinned artifact Action.
 
+The report's `version` identifies the Action ref: a release tag for tag-based
+usage, or the full commit ID for the recommended SHA pin. A local `uses: ./`
+invocation reports `git-<checkout-commit>`. The version comes from the Action's
+source reference, never from the consumer repository's PR SHA or tag.
+
+CI invokes the actual composite Action on GitHub-hosted runners against synthetic
+PRs that produce pass, blocked, and incomplete results. The test harness supplies
+fixture events through `BASH_ENV` and asserts the step outcome, outputs, report
+version, commit IDs, and expected findings. Its `continue-on-error` is only for
+asserting expected test failures; it must not be copied into a consumer gate.
+
 Required repository controls are outside the CLI:
 
 1. Require the gate for merging and restrict bypass permissions and direct pushes.

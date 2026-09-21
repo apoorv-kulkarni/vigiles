@@ -26,18 +26,21 @@ func TestActionVerdictContract(t *testing.T) {
 	base, head := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	pass := `{"status":"pass","base_commit":"` + base + `","head_commit":"` + head + `","inputs":[{}],"incomplete":[],"signals":[]}`
 	for _, tc := range []struct {
-		name, report, exit, event string
-		wantSuccess               bool
+		name, report, exit, event, ref string
+		wantSuccess                    bool
 	}{
-		{"pass", pass, "0", "pull_request", true},
-		{"blocked", `{"status":"blocked","incomplete":[],"signals":[{}]}`, "1", "pull_request", false},
-		{"incomplete", `{"status":"incomplete","incomplete":["offline"]}`, "2", "pull_request", false},
-		{"ignored error", pass, "1", "pull_request", false},
-		{"forged success", `{"status":"blocked"}`, "0", "pull_request", false},
-		{"stale", strings.ReplaceAll(pass, head, strings.Repeat("c", 40)), "0", "pull_request", false},
-		{"empty scope", strings.ReplaceAll(pass, `[{}]`, `[]`), "0", "pull_request", false},
-		{"missing report", "", "0", "pull_request", false},
-		{"privileged event", pass, "0", "pull_request_target", false},
+		{"pass", pass, "0", "pull_request", "v0.4.0-rc.1", true},
+		{"commit pin", pass, "0", "pull_request", strings.Repeat("c", 40), true},
+		{"local action", pass, "0", "pull_request", "", true},
+		{"invalid ref", pass, "0", "pull_request", "v1 -X other=value", false},
+		{"blocked", `{"status":"blocked","incomplete":[],"signals":[{}]}`, "1", "pull_request", "v0.4.0", false},
+		{"incomplete", `{"status":"incomplete","incomplete":["offline"]}`, "2", "pull_request", "v0.4.0", false},
+		{"ignored error", pass, "1", "pull_request", "v0.4.0", false},
+		{"forged success", `{"status":"blocked"}`, "0", "pull_request", "v0.4.0", false},
+		{"stale", strings.ReplaceAll(pass, head, strings.Repeat("c", 40)), "0", "pull_request", "v0.4.0", false},
+		{"empty scope", strings.ReplaceAll(pass, `[{}]`, `[]`), "0", "pull_request", "v0.4.0", false},
+		{"missing report", "", "0", "pull_request", "v0.4.0", false},
+		{"privileged event", pass, "0", "pull_request_target", "v0.4.0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -48,6 +51,8 @@ func TestActionVerdictContract(t *testing.T) {
 			mockGo := `#!/bin/bash
 set -euo pipefail
 [[ "$PWD" == "$VIGILES_ACTION_PATH" && "$GOWORK" == off && "$GOFLAGS" == "" && "$GOPROXY" == off ]]
+version=${VIGILES_ACTION_REF:-git-$(git rev-parse HEAD)}
+[[ " $* " == *" -ldflags -X github.com/apoorv-kulkarni/vigiles/cmd.Version=$version "* ]]
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == -o ]]; then cp "$FIXTURE_GATE" "$2"; exit 0; fi
   shift
@@ -74,6 +79,7 @@ exit 3
 			t.Setenv("GITHUB_EVENT_NAME", tc.event)
 			t.Setenv("GITHUB_EVENT_PATH", filepath.Join(dir, "event.json"))
 			t.Setenv("VIGILES_ACTION_PATH", actionPath)
+			t.Setenv("VIGILES_ACTION_REF", tc.ref)
 			t.Setenv("GITHUB_WORKSPACE", dir)
 			t.Setenv("RUNNER_TEMP", dir)
 			t.Setenv("GITHUB_OUTPUT", filepath.Join(dir, "outputs"))
