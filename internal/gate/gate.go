@@ -122,7 +122,7 @@ func Run(repo, base, head string) (*Report, error) {
 
 func supportedManifest(name string) bool {
 	base := strings.ToLower(path.Base(name))
-	return base == "package.json" || base == "package-lock.json" || base == "uv.lock" || base == "constraints.txt" ||
+	return base == "package.json" || base == "package-lock.json" || base == "pnpm-lock.yaml" || base == "uv.lock" || base == "constraints.txt" ||
 		base == "requirements.txt" || (strings.HasSuffix(base, ".txt") &&
 		(strings.HasPrefix(base, "requirements-") || strings.HasPrefix(base, "requirements_")))
 }
@@ -130,7 +130,7 @@ func supportedManifest(name string) bool {
 func unsupportedManifest(name string) bool {
 	switch strings.ToLower(path.Base(name)) {
 	case "pyproject.toml", "setup.py", "setup.cfg", "pipfile", "pipfile.lock", "poetry.lock",
-		"yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "npm-shrinkwrap.json", "go.mod", "go.sum",
+		"yarn.lock", "bun.lock", "bun.lockb", "npm-shrinkwrap.json", "go.mod", "go.sum",
 		"cargo.toml", "cargo.lock", "gemfile", "gemfile.lock", "composer.json", "composer.lock",
 		".mcp.json", "mcp.json":
 		return true
