@@ -38,16 +38,6 @@ var validFormats = map[string]bool{"table": true, "json": true, "summary": true,
 
 var validDiffFormats = map[string]bool{"table": true, "json": true}
 
-// validFailOnTypes is the set of accepted --fail-on values.
-var validFailOnTypes = map[string]bool{
-	"vulnerability":    true,
-	"heuristic":        true,
-	"system-heuristic": true,
-	"trust-signal":     true,
-	"all":              true,
-	"none":             true,
-}
-
 type scanOptions struct {
 	Strict           bool
 	EnableProvenance bool
@@ -59,21 +49,7 @@ type scanOptions struct {
 	Suppressions     []config.Suppression
 }
 
-// parseFailOn parses a comma-separated --fail-on value into a type set.
-func parseFailOn(input string) (map[string]bool, error) {
-	result := map[string]bool{}
-	for _, t := range strings.Split(input, ",") {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-		if !validFailOnTypes[t] {
-			return nil, fmt.Errorf("invalid --fail-on value %q (valid: vulnerability, heuristic, system-heuristic, trust-signal, all, none)", t)
-		}
-		result[t] = true
-	}
-	return result, nil
-}
+func parseFailOn(input string) (map[string]bool, error) { return config.ParseFailOn(input) }
 
 // resolveFailOn returns the effective fail-on string.
 // CLI flag takes precedence; config policy is the fallback; "all" is the final default.
@@ -87,21 +63,8 @@ func resolveFailOn(flagValue, configValue string) string {
 	return "all"
 }
 
-// hasBlockingSignal reports whether any signal matches the fail-on policy.
-// A nil or empty map defaults to "all" behaviour (backward-compatible).
 func hasBlockingSignal(signals []signal.Signal, failOn map[string]bool) bool {
-	if len(failOn) == 0 || failOn["all"] {
-		return len(signals) > 0
-	}
-	if failOn["none"] {
-		return false
-	}
-	for _, s := range signals {
-		if failOn[s.Type] {
-			return true
-		}
-	}
-	return false
+	return config.HasBlockingSignal(signals, failOn)
 }
 
 // Execute parses args and runs the appropriate subcommand.
@@ -117,6 +80,8 @@ func Execute() int {
 		return runScanCmd(os.Args[2:])
 	case "diff":
 		return runDiffCmd(os.Args[2:])
+	case "mcp":
+		return runMCPCmd(os.Args[2:])
 	case "gate":
 		return runGateCmd(os.Args[2:])
 	case "version":
@@ -666,6 +631,7 @@ Usage:
   vigiles scan [flags]                  Scan installed packages
   vigiles diff <old-file> <new-file>    Compare dependency files
   vigiles gate --base SHA --head SHA    Enforce dependency changes using base policy
+  vigiles mcp --repo DIR --base SHA    Serve local dependency checks over MCP
   vigiles version                       Print version
   vigiles help                          Show this help
 

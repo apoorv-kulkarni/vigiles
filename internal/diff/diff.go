@@ -3,6 +3,7 @@
 package diff
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -240,6 +241,7 @@ func normalizeVersionForRecency(version, ecosystem string) (string, bool) {
 
 type npmRegistryRiskChecker struct {
 	client     *http.Client
+	ctx        context.Context
 	incomplete []string
 }
 
@@ -300,7 +302,15 @@ func (c *npmRegistryRiskChecker) fetchPackageVersion(name, version string) (npmV
 		return npmVersionMetadata{}, false
 	}
 	u := fmt.Sprintf("https://registry.npmjs.org/%s/%s", url.PathEscape(name), url.PathEscape(version))
-	resp, err := c.client.Get(u)
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return npmVersionMetadata{}, false
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return npmVersionMetadata{}, false
 	}

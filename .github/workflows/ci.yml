@@ -39,6 +39,19 @@ jobs:
       - name: Test
         run: go test ./...
 
+  minimum-go:
+    name: Minimum Go version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: '1.24.x'
+          cache: false
+      - run: go test ./...
+
   action:
     name: Composite Action (${{ matrix.verdict }})
     runs-on: ubuntu-latest
@@ -124,3 +137,5 @@ jobs:
             -o "$RUNNER_TEMP/vigiles" .
           test "$("$RUNNER_TEMP/vigiles" version)" = 'vigiles v0.0.0-smoke'
           "$RUNNER_TEMP/vigiles" help > /dev/null
+      - name: Test MCP protocol and working-tree filesystem controls
+        run: go test -race ./internal/mcp ./internal/gate

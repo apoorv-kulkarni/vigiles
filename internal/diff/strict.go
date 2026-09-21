@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -44,6 +45,11 @@ func RunStrict(oldPath, newPath string) (*StrictResult, error) {
 // CompareStrict treats nil content as an absent file. Neither input is executed.
 // Its scope is dependency changes, not a full vulnerability or source-code audit.
 func CompareStrict(name string, oldData, newData []byte) *StrictResult {
+	return CompareStrictContext(context.Background(), name, oldData, newData)
+}
+
+// CompareStrictContext propagates cancellation through external metadata reads.
+func CompareStrictContext(ctx context.Context, name string, oldData, newData []byte) *StrictResult {
 	r := &StrictResult{Result: Result{OldFile: name, NewFile: name, Entries: []Entry{}},
 		Incomplete: []string{}, OldSHA256: fmt.Sprintf("%x", sha256.Sum256(oldData)),
 		NewSHA256: fmt.Sprintf("%x", sha256.Sum256(newData))}
@@ -59,8 +65,8 @@ func CompareStrict(name string, oldData, newData []byte) *StrictResult {
 	if len(r.Incomplete) > 0 {
 		return r
 	}
-	npm := &npmRegistryRiskChecker{client: &http.Client{Timeout: 4 * time.Second}}
-	recency := &strictRecency{checker: checker.NewRecencyChecker()}
+	npm := &npmRegistryRiskChecker{client: &http.Client{Timeout: 4 * time.Second}, ctx: ctx}
+	recency := &strictRecency{checker: checker.NewRecencyChecker(), ctx: ctx}
 	r.Entries = computeDiffWith(oldDeps, newDeps, eco, recency, npm)
 	if strings.EqualFold(filepath.Base(name), "package-lock.json") {
 		r.Entries = append(r.Entries, artifactChanges(oldData, newData)...)
@@ -87,6 +93,7 @@ func CompareStrict(name string, oldData, newData []byte) *StrictResult {
 
 type strictRecency struct {
 	checker    *checker.RecencyChecker
+	ctx        context.Context
 	incomplete []string
 }
 
@@ -94,7 +101,7 @@ func (c *strictRecency) CheckVersion(name, version, ecosystem string) *signal.Si
 	if ecosystem != "pip" {
 		return nil
 	}
-	sig, err := c.checker.CheckVersionWithError(name, version)
+	sig, err := c.checker.CheckVersionContext(c.ctx, name, version)
 	if err != nil {
 		c.incomplete = append(c.incomplete, fmt.Sprintf("PyPI recency unavailable for %s@%s", name, version))
 	}

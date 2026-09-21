@@ -20,17 +20,19 @@ import (
 )
 
 type Report struct {
-	Version       string          `json:"version"`
-	Status        string          `json:"status"`
-	Scope         string          `json:"scope"`
-	Base          string          `json:"base_commit"`
-	Head          string          `json:"head_commit"`
-	PolicySHA256  string          `json:"policy_sha256"`
-	PolicyChanged bool            `json:"policy_changed"`
-	Inputs        []Input         `json:"inputs"`
-	Signals       []signal.Signal `json:"signals"`
-	Incomplete    []string        `json:"incomplete"`
-	Policy        *config.Config  `json:"-"`
+	Version        string          `json:"version"`
+	Status         string          `json:"status"`
+	Scope          string          `json:"scope"`
+	Base           string          `json:"base_commit"`
+	Head           string          `json:"head_commit"`
+	Candidate      string          `json:"candidate,omitempty"`
+	SnapshotSHA256 string          `json:"snapshot_sha256,omitempty"`
+	PolicySHA256   string          `json:"policy_sha256"`
+	PolicyChanged  bool            `json:"policy_changed"`
+	Inputs         []Input         `json:"inputs"`
+	Signals        []signal.Signal `json:"signals"`
+	Incomplete     []string        `json:"incomplete"`
+	Policy         *config.Config  `json:"-"`
 }
 
 type Input struct {
@@ -170,7 +172,12 @@ func readBlob(repo string, b blob) ([]byte, error) {
 	if b.kind != "blob" || (b.mode != "100644" && b.mode != "100755") {
 		return nil, fmt.Errorf("symlinks and non-regular files are not supported")
 	}
-	return git(repo, "cat-file", "blob", b.oid)
+	data, err := git(repo, "cat-file", "blob", b.oid)
+	// A present empty file must not be mistaken for an absent manifest.
+	if err == nil && data == nil {
+		data = []byte{}
+	}
+	return data, err
 }
 
 // Git object reads do not run checkout filters, hooks, package managers or PR scripts.

@@ -32,20 +32,7 @@ func runGateCmd(args []string) int {
 		}
 		return ExitError
 	}
-	r.Version = Version
-	failOn, err := parseFailOn(resolveFailOn("", r.Policy.Policy.FailOn))
-	if err != nil {
-		r.Incomplete = append(r.Incomplete, "invalid base policy: "+err.Error())
-	}
-	r.Signals = config.ApplySuppressions(r.Signals, r.Policy.Suppress, os.Stderr)
-	code := ExitClean
-	r.Status = "pass"
-	if hasBlockingSignal(r.Signals, failOn) {
-		r.Status, code = "blocked", ExitFindings
-	}
-	if len(r.Incomplete) > 0 {
-		r.Status, code = "incomplete", ExitError
-	}
+	code := gate.Decide(r, Version, os.Stderr)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(r); err != nil {
