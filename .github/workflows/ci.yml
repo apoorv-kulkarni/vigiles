@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Build and test
@@ -35,3 +38,89 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  action:
+    name: Composite Action (${{ matrix.verdict }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        verdict: [pass, blocked, incomplete]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Prepare synthetic PR
+        id: fixture
+        env:
+          VERDICT: ${{ matrix.verdict }}
+        run: bash scripts/test-action-fixture.sh "$VERDICT"
+
+      - name: Run composite Action
+        id: gate
+        uses: ./
+        # Expected failures are asserted below, never ignored in a consumer gate.
+        continue-on-error: true
+        env:
+          BASH_ENV: ${{ steps.fixture.outputs.env }}
+
+      - name: Assert Action result
+        if: always()
+        env:
+          EXPECTED: ${{ matrix.verdict }}
+          OUTCOME: ${{ steps.gate.outcome }}
+          VERDICT: ${{ steps.gate.outputs.verdict }}
+          REPORT: ${{ steps.gate.outputs.report }}
+          BASE: ${{ steps.fixture.outputs.base }}
+          HEAD: ${{ steps.fixture.outputs.head }}
+        run: |
+          expected_outcome=failure
+          if [[ "$EXPECTED" == pass ]]; then expected_outcome=success; fi
+          test "$OUTCOME" = "$expected_outcome"
+          test "$VERDICT" = "$EXPECTED"
+          jq -e --arg status "$EXPECTED" --arg base "$BASE" --arg head "$HEAD" \
+            --arg version "git-$(git rev-parse HEAD)" \
+            '.status == $status and .base_commit == $base and .head_commit == $head
+             and .version == $version and (.inputs | length) > 0
+             and (if $status == "blocked" then
+                    any(.signals[]; .id == "VIGILES-NPM-ARTIFACT-CHANGE")
+                  elif $status == "incomplete" then (.incomplete | length) > 0
+                  else (.signals | length) == 0 and (.incomplete | length) == 0 end)' "$REPORT"
+
+  binaries:
+    name: Binary smoke (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: '1.26.4'
+          cache: false
+      - name: Build and execute release binary
+        env:
+          CGO_ENABLED: '0'
+          EXPECTED_OS: ${{ matrix.os }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(go env GOOS)" = "$EXPECTED_OS"
+          test "$(go env GOARCH)" = "$EXPECTED_ARCH"
+          go build -trimpath -ldflags '-s -w -X github.com/apoorv-kulkarni/vigiles/cmd.Version=v0.0.0-smoke' \
+            -o "$RUNNER_TEMP/vigiles" .
+          test "$("$RUNNER_TEMP/vigiles" version)" = 'vigiles v0.0.0-smoke'
+          "$RUNNER_TEMP/vigiles" help > /dev/null

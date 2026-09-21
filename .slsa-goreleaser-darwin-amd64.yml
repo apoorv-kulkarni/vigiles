@@ -1,0 +1,16 @@
+version: 1
+
+binary: vigiles-darwin-amd64
+main: .
+goos: darwin
+goarch: amd64
+
+env:
+  - GO111MODULE=on
+  - CGO_ENABLED=0
+
+flags:
+  - -trimpath
+
+ldflags:
+  - "-s -w -X github.com/apoorv-kulkarni/vigiles/cmd.Version={{ .Tag }}"

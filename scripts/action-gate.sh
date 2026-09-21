@@ -20,9 +20,19 @@ printf 'report=%s\n' "$report" >> "$GITHUB_OUTPUT"
 # Build only the pinned Action's source. Never use the target's Go workspace,
 # compiler flags, dependencies, build cache or executable named "vigiles".
 cd "$VIGILES_ACTION_PATH"
+version=${VIGILES_ACTION_REF:-}
+if [[ -z "$version" ]]; then
+  version="git-$(git rev-parse HEAD)"
+fi
+if [[ ! "$version" =~ ^[a-zA-Z0-9._/+~-]+$ ]]; then
+  echo 'Vigiles received an invalid Action ref.' >&2
+  exit 2
+fi
 GOWORK=off GOENV=off GOFLAGS='' GOTOOLCHAIN=local CGO_ENABLED=0 \
   GOPROXY=off GOPATH="$gate_dir/go" GOCACHE="$gate_dir/cache" \
-  go build -mod=readonly -trimpath -buildvcs=false -o "$gate_dir/vigiles" .
+  go build -mod=readonly -trimpath -buildvcs=false \
+    -ldflags "-X github.com/apoorv-kulkarni/vigiles/cmd.Version=$version" \
+    -o "$gate_dir/vigiles" .
 
 status=0
 "$gate_dir/vigiles" gate --repo "$GITHUB_WORKSPACE" --base "$base_sha" --head "$head_sha" > "$report" || status=$?

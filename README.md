@@ -24,6 +24,10 @@ go build -o vigiles .
 ./vigiles diff requirements-old.txt requirements-new.txt
 ```
 
+Release builds include Linux AMD64 and macOS Intel/Apple Silicon binaries, each
+with SLSA provenance. See [release artifacts and version reporting](docs/releases.md)
+for filenames and validation coverage.
+
 ## Why this exists
 
 On March 24, 2026, [backdoored versions of LiteLLM were published to PyPI](https://futuresearch.ai/blog/litellm-pypi-supply-chain-attack/). In 3 hours, they harvested SSH keys, cloud credentials, and Kubernetes secrets from an estimated 500,000 installations.
