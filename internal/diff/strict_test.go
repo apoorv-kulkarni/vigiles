@@ -58,6 +58,19 @@ func TestStrictUVLockCoverage(t *testing.T) {
 	}
 }
 
+func TestStrictPNPMLockCoverage(t *testing.T) {
+	r := CompareStrict("pnpm-lock.yaml", []byte(pnpmLockFixture), []byte(pnpmLockFixture))
+	if !r.Complete || len(r.Incomplete) != 0 {
+		t.Fatalf("valid pnpm lockfile was incomplete: %+v", r)
+	}
+
+	patched := strings.Replace(pnpmLockFixture, "importers:", "patchedDependencies:\n  react@19.1.1: deadbeef\n\nimporters:", 1)
+	r = CompareStrict("pnpm-lock.yaml", nil, []byte(patched))
+	if r.Complete || len(r.Incomplete) == 0 {
+		t.Fatalf("patched pnpm lockfile passed strict comparison: %+v", r)
+	}
+}
+
 func TestStrictRegistryFailuresCannotPass(t *testing.T) {
 	for _, tc := range []struct {
 		name, body     string
