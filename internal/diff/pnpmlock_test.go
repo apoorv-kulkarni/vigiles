@@ -129,6 +129,7 @@ func TestParsePNPMLockRejectsUnsupportedCoverage(t *testing.T) {
 		{"missing integrity", strings.Replace(pnpmLockFixture, "resolution: {integrity: sha512-react}", "resolution: {}", 1)},
 		{"patched dependencies", strings.Replace(pnpmLockFixture, "importers:", "patchedDependencies:\n  react@19.1.1: deadbeef\n\nimporters:", 1)},
 		{"pnpmfile hook", strings.Replace(pnpmLockFixture, "importers:", "pnpmfileChecksum: sha256-deadbeef\n\nimporters:", 1)},
+		{"inline packages map", "lockfileVersion: '9.0'\npackages: {react@19.1.1: {resolution: {integrity: sha512-react}}}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parsePNPMLock([]byte(tc.body)); err == nil {
