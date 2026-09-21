@@ -45,6 +45,19 @@ func TestStrictParserRejectsCoverageGaps(t *testing.T) {
 	}
 }
 
+func TestStrictUVLockCoverage(t *testing.T) {
+	r := CompareStrict("uv.lock", []byte(uvLockFixture), []byte(uvLockFixture))
+	if !r.Complete || len(r.Incomplete) != 0 {
+		t.Fatalf("valid uv.lock was incomplete: %+v", r)
+	}
+
+	unsupported := strings.Replace(uvLockFixture, "https://pypi.org/simple", "https://packages.example.com/simple", 1)
+	r = CompareStrict("uv.lock", nil, []byte(unsupported))
+	if r.Complete || len(r.Incomplete) == 0 {
+		t.Fatalf("unsupported uv.lock source passed strict comparison: %+v", r)
+	}
+}
+
 func TestStrictRegistryFailuresCannotPass(t *testing.T) {
 	for _, tc := range []struct {
 		name, body     string
