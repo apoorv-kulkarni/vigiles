@@ -8,7 +8,20 @@ import (
 
 const pnpmLockKeyPrefix = "\x00pnpm-lock\x00"
 
-var pnpmLockVersion = regexp.MustCompile(`^lockfileVersion:\s*['"]?([^'"]+)['"]?\s*(?:#.*)?$`)
+var (
+	pnpmLockVersion = regexp.MustCompile(`^lockfileVersion:\s*['"]?([^'"]+)['"]?\s*(?:#.*)?package diff
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+const pnpmLockKeyPrefix = "\x00pnpm-lock\x00"
+
+)
+	pnpmIntegrity   = regexp.MustCompile(`integrity:\s*['"]?([^,'"}[:space:]]+)`)
+)
 
 type pnpmLockPackage struct {
 	name       string
@@ -36,10 +49,11 @@ func parsePNPMLock(data []byte) (map[string]string, error) {
 		if current.resolution == "" {
 			return fmt.Errorf("pnpm-lock.yaml package %s@%s is missing resolution metadata", current.name, current.version)
 		}
-		if err := validatePNPMResolution(current.resolution); err != nil {
+		integrity, err := validatePNPMResolution(current.resolution)
+		if err != nil {
 			return fmt.Errorf("pnpm-lock.yaml package %s@%s: %w", current.name, current.version, err)
 		}
-		key := pnpmDependencyKey(current.name, current.version)
+		key := pnpmDependencyKey(current.name, current.version, integrity)
 		if prior, ok := resolutions[key]; ok && prior != current.resolution {
 			return fmt.Errorf("pnpm-lock.yaml package %s@%s has conflicting resolution metadata", current.name, current.version)
 		}
@@ -178,21 +192,34 @@ func splitPNPMPackageKey(key string) (string, string, error) {
 	return name, version, nil
 }
 
-func validatePNPMResolution(resolution string) error {
+func validatePNPMResolution(resolution string) (string, error) {
 	lower := strings.ToLower(resolution)
 	for _, unsupported := range []string{
 		"tarball:", "type:", "repo:", "directory:", "url:", "bin:", "archive:", "variants:",
 	} {
 		if strings.Contains(lower, unsupported) {
-			return fmt.Errorf("unsupported package source in resolution metadata")
+			return "", fmt.Errorf("unsupported package source in resolution metadata")
 		}
 	}
-	if !strings.Contains(lower, "integrity:") {
-		return fmt.Errorf("resolution does not contain package integrity")
+	match := pnpmIntegrity.FindStringSubmatch(resolution)
+	if len(match) != 2 {
+		return "", fmt.Errorf("resolution does not contain package integrity")
 	}
-	return nil
+	return match[1], nil
 }
 
-func pnpmDependencyKey(name, version string) string {
-	return pnpmLockKeyPrefix + strings.ToLower(strings.TrimSpace(name)) + "\x00" + version
+func pnpmDependencyKey(name, version, integrity string) string {
+	return pnpmLockKeyPrefix + strings.ToLower(strings.TrimSpace(name)) + "\x00" + version + "\x00" + integrity
+}
+
+func pnpmDependencyIdentity(key string) (string, string, bool) {
+	if !strings.HasPrefix(key, pnpmLockKeyPrefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(key, pnpmLockKeyPrefix)
+	parts := strings.SplitN(rest, "\x00", 3)
+	if len(parts) != 3 {
+		return "", "", false
+	}
+	return parts[0] + "\x00" + parts[1], parts[1], true
 }
