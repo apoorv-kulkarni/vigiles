@@ -66,9 +66,10 @@ on disk. A working-tree policy edit is recorded as `policy_changed`; only the
 startup baseline's policy and suppressions determine the verdict.
 
 Supported formats and strict parsing rules are the same as the
-[dependency gate](enforcement.md): npm `package.json` and `package-lock.json`,
-pip `requirements.txt`, `requirements-*.txt`, `requirements_*.txt`,
-`constraints.txt`, and supported public-PyPI entries in `uv.lock`. Changed
+[dependency gate](enforcement.md): npm `package.json`, `package-lock.json`,
+and supported `pnpm-lock.yaml` v9 entries; pip `requirements.txt`,
+`requirements-*.txt`, `requirements_*.txt`, `constraints.txt`, and
+supported public-PyPI entries in `uv.lock`. Changed
 recognized unsupported manifests produce `incomplete`, including `go.mod` and
 MCP configuration files. The MCP transport does
 not add a parser or security audit for MCP configuration or other servers.
