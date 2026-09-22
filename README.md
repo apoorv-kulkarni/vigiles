@@ -61,9 +61,17 @@ go build -o vigiles .
 
 ## Why this exists
 
-On March 24, 2026, [backdoored versions of LiteLLM were published to PyPI](https://futuresearch.ai/blog/litellm-pypi-supply-chain-attack/). In 3 hours, they harvested SSH keys, cloud credentials, and Kubernetes secrets from an estimated 500,000 installations.
+On March 24, 2026, malicious LiteLLM versions `1.82.7` and `1.82.8` were
+published to PyPI after publisher credentials were compromised through an
+upstream CI dependency. [PyPI's incident report](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/)
+says the malware ran on install and harvested sensitive credentials and files.
+[LiteLLM's incident thread](https://github.com/BerriAI/litellm/issues/24518)
+reports that `1.82.8` also added a `.pth` startup hook that ran on Python
+startup without requiring an explicit LiteLLM import. Snyk estimated the
+malicious releases were available for approximately three hours before PyPI
+quarantine.
 
-Existing tools like `pip-audit` and `npm audit` check against known CVE databases. That's necessary but insufficient — no advisory existed during the attack window. Vigiles adds heuristic checks and trust signals that surface risk before an advisory is published.
+Existing tools like `pip-audit` and `npm audit` check against known CVE databases. That's necessary but insufficient — no advisory existed during the attack window. Vigiles adds heuristic checks and trust signals that surface risk before an advisory is published. See the [inert LiteLLM replay](docs/case-studies/litellm-2026.md) for exactly what Vigiles can flag before and after installation.
 
 ## How Vigiles fits in the landscape
 

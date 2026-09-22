@@ -326,8 +326,11 @@ func annotate(name, oldVersion, version, ecosystem string, isNew bool, recency r
 		}
 	}
 
-	// Recency check for newly added, exactly pinned pip versions.
-	if isNew && recency != nil {
+	// Recency check for added or updated, exactly pinned pip versions.
+	// A compromised publisher can ship a malicious update to an existing,
+	// trusted package, so version changes need the same freshness scrutiny as
+	// newly introduced dependencies.
+	if recency != nil {
 		if normalized, ok := normalizeVersionForRecency(version, ecosystem); ok {
 			if recent := recency.CheckVersion(name, normalized, ecosystem); recent != nil {
 				signals = append(signals, *recent)
