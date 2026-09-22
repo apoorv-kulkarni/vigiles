@@ -1,0 +1,2 @@
+# Last known-good LiteLLM version before the March 24, 2026 compromise.
+litellm==1.82.6
