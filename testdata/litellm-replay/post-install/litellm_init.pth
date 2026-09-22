@@ -1,0 +1,4 @@
+# Inert replay fixture. This file is never executed by the test suite.
+# It reproduces the startup-hook shape Vigiles looks for without using
+# credential theft, network exfiltration, persistence, or lateral movement.
+import os; os.system('echo VIGILES_REPLAY_ONLY')
