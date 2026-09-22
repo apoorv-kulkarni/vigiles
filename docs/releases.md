@@ -1,6 +1,6 @@
 # Release artifacts
 
-The [v0.4.0-rc.2 prerelease](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.2)
+The [v0.4.0 release](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0)
 provides these artifacts:
 
 | Platform | Binary | Provenance |
@@ -29,7 +29,7 @@ installed, verify the artifact digest, signature, source repository and release 
 slsa-verifier verify-artifact vigiles-darwin-arm64 \
   --provenance-path vigiles-darwin-arm64.intoto.jsonl \
   --source-uri github.com/apoorv-kulkarni/vigiles \
-  --source-tag v0.4.0-rc.2
+  --source-tag v0.4.0
 ```
 
 Only execute the downloaded binary after verification succeeds. This verifies

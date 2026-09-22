@@ -1,6 +1,6 @@
 # Local MCP server
 
-**Available in v0.4.0-rc.2.** This command supports Linux and macOS, with
+**Available in v0.4.0.** This command supports Linux and macOS, with
 [release binaries](releases.md) for both. Source builds require Go 1.24+.
 Use a currently supported Go release. Vigiles still has no external Go dependencies.
 

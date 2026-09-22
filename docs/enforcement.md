@@ -95,7 +95,7 @@ pnpm lockfile integrity changes, emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
 
 Use a fresh Linux runner in a dedicated job. This initial Action supports only
 `pull_request` events; merge queues and other events are not yet supported.
-The example pins the reviewed implementation included in `v0.4.0-rc.2`:
+The example pins the reviewed implementation included in `v0.4.0`:
 
 ```yaml
 name: Dependency gate
@@ -113,7 +113,7 @@ jobs:
           persist-credentials: false
       - name: Gate dependency changes
         id: vigiles
-        uses: apoorv-kulkarni/vigiles@4ac38a701b3c4b58e07b0531cb0b7f7cbfdd93f7 # v0.4.0-rc.2 implementation
+        uses: apoorv-kulkarni/vigiles@4ac38a701b3c4b58e07b0531cb0b7f7cbfdd93f7 # v0.4.0 implementation
 ```
 
 The Action obtains the expected commits from the PR event, builds its own pinned
@@ -161,7 +161,7 @@ The ordinary `diff` command still reads local `.vigiles.yaml`, so an agent that
 can modify that policy can change which findings block it. For committed work,
 use `gate` with base/head selected by the trusted launcher; it ignores local policy.
 
-The [local MCP server](mcp.md), available in RC2, reads policy and suppressions from
+The [local MCP server](mcp.md), available in v0.4.0, reads policy and suppressions from
 a trusted base commit chosen at startup. It keeps that baseline in memory and
 checks the files currently on disk, including untracked and ignored manifests.
 Its single tool takes no arguments, so calls cannot choose a weaker policy or
