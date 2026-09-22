@@ -50,14 +50,20 @@ ignores Git replacement objects, rejects symlink manifests and submodules, and
 limits individual Git command output to 8 MiB. Both commits must already be
 available locally; unavailable objects fail the gate.
 
-Recognized names are `package.json`, `package-lock.json`, `uv.lock`,
-`requirements.txt`, `requirements-*.txt`, `requirements_*.txt`, and
+Recognized names are `package.json`, `package-lock.json`, `pnpm-lock.yaml`,
+`uv.lock`, `requirements.txt`, `requirements-*.txt`, `requirements_*.txt`, and
 `constraints.txt`, at any depth. There are no implicit vendor-directory
 exclusions. For `uv.lock`, schema version 1 packages from the public PyPI
 registry are covered, including multiple marker-specific versions of a package.
 Editable and virtual workspace packages are local project code; alternate
 registries and other package source types make the comparison incomplete.
-Changes to recognized unsupported manifests (for example `pyproject.toml`, `pnpm-lock.yaml`,
+For `pnpm-lock.yaml`, lockfile version 9.0 packages with exact semver keys and
+integrity-backed registry resolution are covered. Peer suffixes do not create
+duplicate package identities. Explicit non-registry resolution types,
+`patchedDependencies`, pnpmfile hooks, and other unsupported pnpm package
+sources make the comparison incomplete. An integrity-only pnpm entry does not
+prove registry provenance when pnpm omits the registry URL.
+Changes to recognized unsupported manifests (for example `pyproject.toml`,
 `go.mod`, or `.mcp.json`) produce an incomplete verdict. No supported manifests
 also produces an incomplete verdict. This is not discovery of every possible
 dependency source: custom filenames, generated inputs and installation commands
@@ -71,6 +77,9 @@ Strict parsing deliberately refuses syntax it cannot faithfully compare:
 - npm lockfile v1, linked packages, multiple versions of the same name, missing
   versions, non-public-registry artifact URLs, ambiguous JSON, and package
   overrides or bundled dependency declarations.
+- pnpm lockfile versions other than 9.0, non-semver package keys, explicit
+  tarball/Git/directory/binary/custom sources, conflicting resolution metadata,
+  `patchedDependencies`, and pnpmfile hooks.
 - Added or updated npm dependencies without exact registry versions. The gate
   currently compares each manifest independently; a neighboring lockfile does
   not resolve ranges in `package.json`.
@@ -79,8 +88,8 @@ Strict parsing deliberately refuses syntax it cannot faithfully compare:
 
 These restrictions can block legitimate projects. Expand parser coverage with
 fixtures rather than suppressing incomplete checks. Unchanged dependencies are
-not fetched again. Same-version changes to npm lockfile artifact locations or
-integrity emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
+not fetched again. Same-version changes to npm package-lock artifact locations or integrity, and
+pnpm lockfile integrity changes, emit `VIGILES-NPM-ARTIFACT-CHANGE` for review.
 
 ## GitHub Actions integration
 

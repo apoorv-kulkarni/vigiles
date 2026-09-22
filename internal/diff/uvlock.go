@@ -131,12 +131,15 @@ func uvDependencyKey(name, version string) string {
 }
 
 func dependencyDisplayName(key string) string {
-	if !strings.HasPrefix(key, uvLockKeyPrefix) {
-		return key
+	for _, prefix := range []string{uvLockKeyPrefix, pnpmLockKeyPrefix} {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(key, prefix)
+		if idx := strings.IndexByte(rest, 0); idx >= 0 {
+			return rest[:idx]
+		}
+		return rest
 	}
-	rest := strings.TrimPrefix(key, uvLockKeyPrefix)
-	if idx := strings.IndexByte(rest, 0); idx >= 0 {
-		return rest[:idx]
-	}
-	return rest
+	return key
 }
