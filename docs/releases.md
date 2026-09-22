@@ -1,6 +1,6 @@
 # Release artifacts
 
-The [v0.4.0-rc.1 prerelease](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.1)
+The [v0.4.0-rc.2 prerelease](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.2)
 provides these artifacts:
 
 | Platform | Binary | Provenance |
@@ -29,7 +29,7 @@ installed, verify the artifact digest, signature, source repository and release 
 slsa-verifier verify-artifact vigiles-darwin-arm64 \
   --provenance-path vigiles-darwin-arm64.intoto.jsonl \
   --source-uri github.com/apoorv-kulkarni/vigiles \
-  --source-tag v0.4.0-rc.1
+  --source-tag v0.4.0-rc.2
 ```
 
 Only execute the downloaded binary after verification succeeds. This verifies
@@ -58,7 +58,7 @@ These smoke tests do not generate SLSA provenance; the tag-triggered release
 workflow performs those builds and signs provenance.
 
 After merging the release changes, pushing a signed `v*` tag triggers publication.
-A tag containing a prerelease suffix, such as `v0.4.0-rc.1`, creates a prerelease
+A tag containing a prerelease suffix, such as `v0.4.0-rc.2`, creates a prerelease
 and is not marked as the latest stable release. Creating the release is separate
 from publishing the Action's Marketplace listing. The Action is usable directly
 from its reviewed repository commit before a Marketplace listing exists.

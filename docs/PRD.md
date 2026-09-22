@@ -160,8 +160,8 @@ Confidence legend:
 Agent enforcement foundation: `gate` reads immutable Git manifests and base
 policy, uses strict dependency comparison, and emits explicit pass/blocked/
 incomplete verdicts. The composite Action derives revisions from the PR event.
-See [enforcement scope and controls](enforcement.md). The unreleased [MCP
-server](mcp.md) adds local working-tree feedback with a fixed trusted baseline.
+See [enforcement scope and controls](enforcement.md). The [MCP server](mcp.md),
+available in v0.4.0-rc.2, adds local working-tree feedback with a fixed trusted baseline.
 MCP configuration parsing and local runtime hooks remain follow-ups; neither
 the server nor the gate is a CVE scanner or sandbox.
 

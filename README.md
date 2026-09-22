@@ -8,14 +8,15 @@ A single binary that scans your installed packages across **pip, npm, Homebrew, 
 
 ## Quickstart
 
-The [v0.4.0-rc.1 release candidate](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.1)
-adds strict checks for local agents, a pull-request gate, and a reusable GitHub
-Action. Install the prerelease explicitly; `@latest` continues to select the
+The [v0.4.0-rc.2 release candidate](https://github.com/apoorv-kulkarni/vigiles/releases/tag/v0.4.0-rc.2)
+includes a local MCP server, strict dependency checks, a pull-request gate, and a
+reusable GitHub Action. RC2 adds Git-reference diffs and supported uv/pnpm lockfile
+comparisons. Install the prerelease explicitly; `@latest` continues to select the
 latest stable release.
 
 ```bash
 # Install the release candidate with Go
-go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.1
+go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.2
 vigiles version
 
 # Scan installed dependencies
@@ -31,9 +32,9 @@ No Go installation is needed for these release binaries:
 
 | Platform | Download |
 | --- | --- |
-| Linux AMD64 | [vigiles](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles) |
-| macOS Intel | [vigiles-darwin-amd64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles-darwin-amd64) |
-| macOS Apple Silicon | [vigiles-darwin-arm64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.1/vigiles-darwin-arm64) |
+| Linux AMD64 | [vigiles](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.2/vigiles) |
+| macOS Intel | [vigiles-darwin-amd64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.2/vigiles-darwin-amd64) |
+| macOS Apple Silicon | [vigiles-darwin-arm64](https://github.com/apoorv-kulkarni/vigiles/releases/download/v0.4.0-rc.2/vigiles-darwin-arm64) |
 
 Each binary has a matching `.intoto.jsonl` provenance file on the release page.
 See [release verification](docs/releases.md#verify-a-download) before running a download.
@@ -49,10 +50,12 @@ The macOS binaries are not Apple-signed or notarized.
 
 ### Build from source
 
+Use Go 1.24 or newer; a currently supported Go release is recommended.
+
 ```bash
 git clone https://github.com/apoorv-kulkarni/vigiles.git
 cd vigiles
-git checkout v0.4.0-rc.1
+git checkout v0.4.0-rc.2
 go build -o vigiles .
 ./vigiles scan
 ```
@@ -140,7 +143,12 @@ Supported:
 ```bash
 vigiles diff old-requirements.txt new-requirements.txt
 vigiles diff --format json old/package.json new/package.json
+vigiles diff --base-ref main package-lock.json
 ```
+
+`--base-ref` compares the current file to the same path at a Git ref. It is a
+reporting convenience and cannot be combined with `--strict`; use `gate` for
+committed changes or MCP for working-tree checks with a trusted baseline.
 
 For `uv.lock`, Vigiles supports schema version 1 packages resolved from the public
 PyPI registry, including marker-specific cases where one package has multiple
@@ -296,7 +304,7 @@ as the exit code. `gate` always blocks incomplete coverage.
 ### Require a dependency gate for pull requests
 
 Add `.github/workflows/vigiles.yml` to a consuming repository. This pins the
-Action to the reviewed commit behind `v0.4.0-rc.1`:
+Action to the reviewed implementation included in `v0.4.0-rc.2`:
 
 ```yaml
 name: Dependency gate
@@ -314,7 +322,7 @@ jobs:
           persist-credentials: false
       - name: Gate dependency changes
         id: vigiles
-        uses: apoorv-kulkarni/vigiles@8ad8c10c46d89c999f5f6b71898dc12a88d078a5 # v0.4.0-rc.1
+        uses: apoorv-kulkarni/vigiles@4ac38a701b3c4b58e07b0531cb0b7f7cbfdd93f7 # v0.4.0-rc.2 implementation
 ```
 
 The Action supports Linux runners and `pull_request` events. It builds its own
@@ -338,10 +346,10 @@ Normal scan output now reports known coverage failures as `status: incomplete`.
 
 The external launcher must enforce the exit code and keep the executable and
 policy outside the agent's writable environment. An agent's voluntary invocation
-of Vigiles is not an enforcement boundary. MCP and runtime hooks are not included
+of Vigiles is not an enforcement boundary. Agent runtime hooks are not included
 in this release candidate.
 
-**Unreleased: local MCP server.** Source builds now support
+**Local MCP server (new in RC2).** Release binaries and source builds support
 `vigiles mcp --repo /absolute/repo --base FULL_TRUSTED_COMMIT_ID` on Linux and
 macOS. Its read-only `check_dependency_changes` tool checks the working tree,
 including uncommitted manifests, against the baseline and policy fixed at startup.
@@ -357,7 +365,7 @@ GitHub Security tab without blocking the build.
 
 ```yaml
 - name: Install vigiles
-  run: go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.1
+  run: go install github.com/apoorv-kulkarni/vigiles@v0.4.0-rc.2
 
 - name: Scan dependencies
   run: vigiles scan --fail-on vulnerability --format sarif --output vigiles.sarif
@@ -405,7 +413,7 @@ The `--format json` output is stable and machine-readable. Progress goes to stde
 
 ```json
 {
-  "version": "v0.4.0-rc.1",
+  "version": "v0.4.0-rc.2",
   "status": "complete",
   "timestamp": "2026-03-30T12:00:00Z",
   "duration_ms": 1820,
@@ -467,10 +475,9 @@ Vigiles provides **informational signals**, not security guarantees.
 - [x] Immutable dependency gate with policy from the base commit
 - [x] Composite GitHub Action for agent-generated pull requests
 - [x] Linux AMD64 and macOS Intel/Apple Silicon releases with SLSA provenance
-
-### Unreleased
-
 - [x] Local MCP server with trusted baseline and working-tree dependency checks
+- [x] Dependency diffs against a Git reference
+- [x] Supported uv.lock and pnpm-lock.yaml dependency comparisons
 
 ### v0.4 — signal quality and stateful detection
 

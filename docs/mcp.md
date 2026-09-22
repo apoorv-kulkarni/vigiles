@@ -1,7 +1,7 @@
 # Local MCP server
 
-**Unreleased.** This command is available in source builds, not in the published
-`v0.4.0-rc.1` binaries. It supports Linux and macOS and requires Go 1.24+ to build.
+**Available in v0.4.0-rc.2.** This command supports Linux and macOS, with
+[release binaries](releases.md) for both. Source builds require Go 1.24+.
 Use a currently supported Go release. Vigiles still has no external Go dependencies.
 
 The server gives agents dependency feedback before committing or installing
@@ -10,9 +10,10 @@ It does not install packages, execute project scripts, or write repository files
 
 ## Start a session
 
-Build a reviewed revision with `make build`, then install the binary in a trusted
-location. A trusted launcher chooses an absolute Git working-tree root and the
-full commit ID of a reviewed baseline:
+Verify and install a release binary, or build a reviewed revision with
+`make build`, then keep the binary in a trusted location. A trusted launcher
+chooses an absolute Git working-tree root and the full commit ID of a reviewed
+baseline:
 
 ```sh
 /trusted/bin/vigiles mcp --repo /work/project --base FULL_TRUSTED_COMMIT_ID
